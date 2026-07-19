@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build output
+dist/
+build/
+*.zip
+*.tar.gz
+
+# OS
+Thumbs.db
+.env
+.env.local
+
+# Temporary files
+temp/
+tmp/
+*.temp
+*.bak
+
+# Testing
+coverage/
+.nyc_output/
+
+# Logs
+logs/
+*.log

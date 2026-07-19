@@ -1,0 +1,32 @@
+{
+  "name": "subtranslate",
+  "version": "1.0.0",
+  "description": "Real-time subtitle translator for Brave Browser and Chrome",
+  "author": "SubTranslate Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/subTranslate.git"
+  },
+  "keywords": [
+    "translation",
+    "subtitle",
+    "chrome-extension",
+    "brave-browser",
+    "youtube",
+    "netflix",
+    "libretranslate",
+    "real-time"
+  ],
+  "scripts": {
+    "setup-icons": "chmod +x setup-icons.sh && ./setup-icons.sh",
+    "lint": "echo 'Linting not configured yet'",
+    "test": "echo 'Testing not configured yet'"
+  },
+  "devDependencies": {},
+  "dependencies": {},
+  "engines": {
+    "brave": ">=1.0.0",
+    "chrome": ">=90.0.0"
+  }
+}
