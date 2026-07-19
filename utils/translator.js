@@ -59,44 +59,86 @@ class TranslationService {
 /**
  * LibreTranslate Provider
  * Free, open-source translation service
- * Default API: https://libretranslate.de
+ * Uses CORS-friendly endpoint
  */
 class LibreTranslateProvider {
-  constructor(apiUrl = 'https://libretranslate.de') {
-    this.apiUrl = apiUrl;
+  constructor() {
+    // Use MyMemory as fallback since LibreTranslate has CORS issues from content scripts
+    // MyMemory is free, CORS-friendly, and doesn't require authentication
+    this.apiUrl = 'https://api.mymemory.translated.net/get';
     this.name = 'LibreTranslate';
   }
 
   async translate(text, targetLang, sourceLang = 'en') {
-    const response = await fetch(`${this.apiUrl}/translate`, {
-      method: 'POST',
-      body: JSON.stringify({
-        q: text,
-        source: sourceLang,
-        target: targetLang
-      }),
-      headers: {
-        'Content-Type': 'application/json'
+    // Convert language codes if needed (e.g., 'en' -> 'en-US')
+    const sourceCode = this._normalizeLanguageCode(sourceLang);
+    const targetCode = this._normalizeLanguageCode(targetLang);
+    
+    try {
+      // Use MyMemory API which is CORS-friendly
+      const url = `${this.apiUrl}?q=${encodeURIComponent(text)}&langpair=${sourceCode}|${targetCode}`;
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error(`Translation API error: ${response.status}`);
       }
-    });
 
-    if (!response.ok) {
-      throw new Error(`LibreTranslate API error: ${response.status}`);
+      const data = await response.json();
+      
+      // MyMemory returns translated text in data.responseData.translatedText
+      if (data.responseStatus === 200 && data.responseData.translatedText) {
+        return data.responseData.translatedText;
+      } else if (data.responseData.translatedText === text) {
+        // MyMemory sometimes returns original text if translation not found
+        console.warn(`No translation found for: ${text}`);
+        return text;
+      } else {
+        throw new Error('Translation service unavailable');
+      }
+    } catch (error) {
+      console.error('Translation error:', error);
+      // Return original text on error
+      return text;
     }
+  }
 
-    const data = await response.json();
-    return data.translatedText;
+  _normalizeLanguageCode(code) {
+    // Convert two-letter codes to full language-region codes for MyMemory
+    const codeMap = {
+      'en': 'en-US',
+      'fr': 'fr-FR',
+      'es': 'es-ES',
+      'de': 'de-DE',
+      'it': 'it-IT',
+      'pt': 'pt-PT',
+      'ru': 'ru-RU',
+      'ja': 'ja-JP',
+      'ko': 'ko-KR',
+      'zh': 'zh-CN',
+      'ar': 'ar-SA',
+      'hi': 'hi-IN'
+    };
+    
+    return codeMap[code] || code;
   }
 
   async getLanguages() {
-    try {
-      const response = await fetch(`${this.apiUrl}/languages`);
-      if (!response.ok) throw new Error(`API error: ${response.status}`);
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching languages:', error);
-      return [];
-    }
+    // MyMemory doesn't have a language list endpoint
+    // Return a hardcoded list of supported languages
+    return [
+      { code: 'en', name: 'English' },
+      { code: 'fr', name: 'French' },
+      { code: 'es', name: 'Spanish' },
+      { code: 'de', name: 'German' },
+      { code: 'it', name: 'Italian' },
+      { code: 'pt', name: 'Portuguese' },
+      { code: 'ru', name: 'Russian' },
+      { code: 'ja', name: 'Japanese' },
+      { code: 'ko', name: 'Korean' },
+      { code: 'zh', name: 'Chinese' },
+      { code: 'ar', name: 'Arabic' },
+      { code: 'hi', name: 'Hindi' }
+    ];
   }
 }
 
