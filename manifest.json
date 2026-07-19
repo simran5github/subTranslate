@@ -29,7 +29,13 @@
         "*://*.crunchyroll.com/*",
         "<all_urls>"
       ],
-      "js": ["content-script.js"],
+      "js": [
+        "utils/translator.js",
+        "utils/cache.js",
+        "utils/storage.js",
+        "utils/subtitle-detector.js",
+        "content-script.js"
+      ],
       "run_at": "document_start",
       "all_frames": false
     }
