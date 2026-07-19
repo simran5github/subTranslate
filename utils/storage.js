@@ -163,11 +163,3 @@ class StorageManager {
     return { ...this.defaults };
   }
 }
-
-// Create singleton instance
-const storageManager = new StorageManager();
-
-// Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = StorageManager;
-}
