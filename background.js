@@ -28,19 +28,25 @@ function initializeBackground() {
  * Handle messages from content scripts and popup
  */
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'log') {
-    console.log('[Content Script]', request.message);
-    sendResponse({ received: true });
-  } else if (request.action === 'translateBatch') {
-    handleTranslateBatch(request.texts, request.targetLang, request.sourceLang, sendResponse);
-    return true; // Indicate async response
-  } else if (request.action === 'getStatus') {
-    const tabId = sender.tab?.id;
-    const status = activeTabsMap.get(tabId) || { url: sender.url, enabled: false };
-    sendResponse(status);
-  } else if (request.action === 'reportError') {
-    console.error('[Content Script Error]', request.error, request.details);
-    sendResponse({ received: true });
+  try {
+    if (request.action === 'log') {
+      console.log('[Content Script]', request.message);
+      sendResponse({ received: true });
+    } else if (request.action === 'translateBatch') {
+      handleTranslateBatch(request.texts, request.targetLang, request.sourceLang, sendResponse);
+      return true; // Indicate async response
+    } else if (request.action === 'getStatus') {
+      const tabId = sender.tab?.id;
+      const status = activeTabsMap.get(tabId) || { url: sender.url, enabled: false };
+      sendResponse(status);
+    } else if (request.action === 'reportError') {
+      console.error('[Content Script Error]', request.error, request.details);
+      sendResponse({ received: true });
+    }
+  } catch (error) {
+    // Suppress errors from messages arriving when handler isn't ready
+    console.debug('Message handler error (non-critical):', error.message);
+    sendResponse({ error: error.message });
   }
 });
 
@@ -77,7 +83,13 @@ async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse)
  */
 function isContentScriptActive(tabId, callback) {
   chrome.tabs.sendMessage(tabId, { action: 'ping' }, (response) => {
-    callback(!!response && !chrome.runtime.lastError);
+    // Silently handle error if content script isn't ready
+    if (chrome.runtime.lastError) {
+      // Content script not ready - this is normal
+      callback(false);
+    } else {
+      callback(!!response);
+    }
   });
 }
 
