@@ -108,9 +108,7 @@ function startSubtitleTranslation() {
     childList: true,
     subtree: true,
     characterData: true,
-    characterDataOldValue: false,
-    attributes: false,
-    attributeFilter: []
+    characterDataOldValue: false
   };
 
   // Start observing the entire document
