@@ -338,12 +338,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getStatus') {
     sendResponse({
       enabled: extensionEnabled,
-      platform: subtitleDetector.detectPlatform(),
+      platform: subtitleDetector?.detectPlatform() || 'unknown',
       stats: translationCache?.getStats() || {}
     });
   } else if (request.action === 'toggleTranslation') {
     extensionEnabled = request.enabled;
-    storageManager.setEnabled(request.enabled);
+    storageManager?.setEnabled(request.enabled);
+    if (!subtitleDetector || !translationCache) {
+      sendResponse({ success: true, pending: true });
+      return;
+    }
     if (request.enabled) {
       startSubtitleTranslation();
     } else {
