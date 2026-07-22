@@ -21,7 +21,7 @@
   "scripts": {
     "setup-icons": "chmod +x setup-icons.sh && ./setup-icons.sh",
     "lint": "echo 'Linting not configured yet'",
-    "test": "echo 'Testing not configured yet'"
+    "test": "node --test"
   },
   "devDependencies": {},
   "dependencies": {},

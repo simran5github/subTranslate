@@ -5,7 +5,8 @@ A powerful, privacy-focused Brave Browser extension that translates English subt
 ## Features
 
 ✨ **Real-Time Translation**
-- Instantly translates subtitles as they appear on screen
+- Copies subtitle text from the page DOM and translates it without altering the visible captions
+- Logs translated output to the console for debugging and inspection
 - Works on YouTube, Netflix, Disney+, Prime Video, Hulu, Crunchyroll, and more
 - Supports multiple language pairs
 
@@ -153,7 +154,7 @@ Supported languages include:
 3. **Cache Check**: Looks up translations in local cache first
 4. **Translation**: Sends unique texts to translation service
 5. **Caching**: Stores translations to avoid duplicate API calls
-6. **Application**: Replaces subtitles with smooth transitions
+6. **Logging**: Emits translated output to the console while leaving the on-screen subtitles unchanged
 
 ### Performance Features
 
@@ -161,7 +162,7 @@ Supported languages include:
 - **Batch Processing**: Groups multiple translations together
 - **Debouncing**: Reduces processing with MutationObserver
 - **Selective Updates**: Only translates new/changed subtitles
-- **Smooth Transitions**: Opacity-based transitions to reduce visual flicker
+- **Non-Mutating Behavior**: Keeps the visible captions intact while translating in the background
 
 ## Translation Providers
 
