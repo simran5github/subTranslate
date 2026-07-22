@@ -15,13 +15,14 @@ let mutationObserver = null;
 let lastProcessedTexts = new Set();
 let processingQueue = [];
 let isProcessing = false;
+let hasLoggedNoSubtitles = false;
 
 /**
  * Initialize extension components
  */
 async function initializeExtension() {
   try {
-    console.log('🎬 SubTranslate: Starting initialization...');
+    console.debug('🎬 SubTranslate: Starting initialization...');
     
     // Check if utility classes are available
     if (typeof TranslationService === 'undefined') {
@@ -37,7 +38,7 @@ async function initializeExtension() {
       throw new Error('SubtitleDetector class not found - utils/subtitle-detector.js may not be loaded');
     }
     
-    console.log('✅ All utility classes loaded');
+    console.debug('✅ All utility classes loaded');
     
     // Initialize translation service
     translationService = new TranslationService('libretranslate');
@@ -45,13 +46,13 @@ async function initializeExtension() {
     storageManager = new StorageManager();
     subtitleDetector = new SubtitleDetector();
 
-    console.log('✅ Service instances created');
+    console.debug('✅ Service instances created');
 
     // Load settings
     currentSettings = await storageManager.getAll();
     extensionEnabled = currentSettings.enabled;
     
-    console.log('✅ Settings loaded:', { enabled: extensionEnabled, targetLang: currentSettings.targetLang });
+    console.debug('✅ Settings loaded:', { enabled: extensionEnabled, targetLang: currentSettings.targetLang });
 
     // Set up storage change listener
     storageManager.onChanged((changes) => {
@@ -60,7 +61,7 @@ async function initializeExtension() {
         
         if (key === 'enabled') {
           extensionEnabled = changes[key].newValue;
-          console.log('⚙️ Extension toggled:', extensionEnabled ? 'ON' : 'OFF');
+          console.debug('⚙️ Extension toggled:', extensionEnabled ? 'ON' : 'OFF');
           if (extensionEnabled) {
             startSubtitleTranslation();
           } else {
@@ -68,19 +69,19 @@ async function initializeExtension() {
           }
         } else if (key === 'provider') {
           translationService.switchProvider(changes[key].newValue);
-          console.log('⚙️ Provider changed to:', changes[key].newValue);
+          console.debug('⚙️ Provider changed to:', changes[key].newValue);
         }
       });
     });
 
     if (extensionEnabled) {
-      console.log('🚀 Extension is enabled, starting translation monitoring...');
+      console.debug('🚀 Extension is enabled, starting translation monitoring...');
       startSubtitleTranslation();
     } else {
-      console.log('⏸️  Extension is disabled');
+      console.debug('⏸️  Extension is disabled');
     }
 
-    console.log('🎉 SubTranslate initialized successfully!');
+    console.debug('🎉 SubTranslate initialized successfully!');
   } catch (error) {
     console.error('❌ Error initializing SubTranslate:', error);
     console.error('Stack trace:', error.stack);
@@ -91,7 +92,7 @@ async function initializeExtension() {
  * Start monitoring for subtitle changes
  */
 function startSubtitleTranslation() {
-  console.log('📺 Starting subtitle translation monitoring...');
+  console.debug('📺 Starting subtitle translation monitoring...');
   
   if (mutationObserver) {
     mutationObserver.disconnect();
@@ -99,7 +100,9 @@ function startSubtitleTranslation() {
 
   // Set up MutationObserver to watch for subtitle changes
   mutationObserver = new MutationObserver((mutations) => {
-    console.log(`🔄 Detected ${mutations.length} DOM mutations`);
+    if (mutations.length > 0) {
+      handleMutations();
+    }
     // Debounce mutations to avoid excessive processing
     handleMutations(mutations);
   });
@@ -114,12 +117,12 @@ function startSubtitleTranslation() {
   // Start observing the entire document
   mutationObserver.observe(document.documentElement, observerConfig);
 
-  console.log('👁️  MutationObserver attached to document');
+  console.debug('👁️  MutationObserver attached to document');
 
   // Initial scan for existing subtitles
   processVisibleSubtitles();
 
-  console.log('✅ Started monitoring for subtitle changes');
+  console.debug('✅ Started monitoring for subtitle changes');
 }
 
 /**
@@ -139,7 +142,8 @@ function stopSubtitleTranslation() {
     el.removeAttribute('data-translated-text');
   });
 
-  console.log('SubTranslate: Stopped monitoring for subtitle changes');
+  console.debug('SubTranslate: Stopped monitoring for subtitle changes');
+  hasLoggedNoSubtitles = false;
 }
 
 /**
@@ -158,18 +162,26 @@ function handleMutations(mutations) {
  */
 async function processVisibleSubtitles() {
   if (!extensionEnabled) {
-    console.log('⏸️  Extension disabled, skipping subtitle processing');
+    console.debug('⏸️  Extension disabled, skipping subtitle processing');
     return;
   }
   if (isProcessing) {
-    console.log('⏳ Already processing, skipping');
+    console.debug('⏳ Already processing, skipping');
     return;
   }
 
   try {
     isProcessing = true;
     const subtitleElements = subtitleDetector.getSubtitleElements();
-    console.log(`🔍 Found ${subtitleElements.length} subtitle elements`);
+    if (subtitleElements.length === 0) {
+      if (!hasLoggedNoSubtitles) {
+        console.debug('SubTranslate: no subtitle elements detected on this page yet');
+        hasLoggedNoSubtitles = true;
+      }
+      return;
+    }
+
+    hasLoggedNoSubtitles = false;
     
     const textsToTranslate = [];
     const elementMap = new Map();
@@ -186,16 +198,16 @@ async function processVisibleSubtitles() {
         textsToTranslate.push({ text, element: el });
         elementMap.set(text, el);
         lastProcessedTexts.add(text);
-        console.log(`✨ New subtitle found: "${text}"`);
+        console.debug(`✨ New subtitle found: "${text}"`);
       }
     }
 
     // Translate new texts
     if (textsToTranslate.length > 0) {
-      console.log(`📤 Translating ${textsToTranslate.length} new subtitle(s)...`);
+      console.debug(`📤 Translating ${textsToTranslate.length} new subtitle(s)...`);
       await translateBatch(textsToTranslate);
     } else {
-      console.log('📭 No new subtitles to translate');
+      console.debug('📭 No new subtitles to translate');
     }
   } catch (error) {
     console.error('❌ Error processing subtitles:', error);
@@ -212,13 +224,13 @@ async function translateBatch(textsToTranslate) {
   const { sourceLang, targetLang } = currentSettings;
   const texts = textsToTranslate.map(item => item.text);
 
-  console.log(`🔤 Languages: ${sourceLang} → ${targetLang}`);
+  console.debug(`🔤 Languages: ${sourceLang} → ${targetLang}`);
 
   // Check cache for already translated texts
   const { cached, missing } = translationCache.batchGet(texts, targetLang, sourceLang);
   
   if (Object.keys(cached).length > 0) {
-    console.log(`✅ ${Object.keys(cached).length} translations found in cache`);
+    console.debug(`✅ ${Object.keys(cached).length} translations found in cache`);
   }
 
   // Apply cached translations to the tracking metadata only, without changing visible captions
@@ -226,14 +238,14 @@ async function translateBatch(textsToTranslate) {
     const element = textsToTranslate.find(item => item.text === text)?.element;
     if (element) {
       subtitleDetector.markAsTranslated(element, translation);
-      console.log(`📦 Cached translation for "${text}": "${translation}"`);
+      console.debug(`📦 Cached translation for "${text}": "${translation}"`);
     }
   });
 
   // Translate missing texts
   if (missing.length > 0) {
     try {
-      console.log(`🌐 Calling translation API for ${missing.length} text(s)...`);
+      console.debug(`🌐 Calling translation API for ${missing.length} text(s)...`);
       const translations = await translateTexts(missing, targetLang, sourceLang);
       
       // Cache and apply translations
@@ -245,12 +257,12 @@ async function translateBatch(textsToTranslate) {
         const element = textsToTranslate.find(item => item.text === text)?.element;
         if (element) {
           subtitleDetector.markAsTranslated(element, translation);
-          console.log(`🌍 Translated: "${text}" → "${translation}"`);
+          console.info(`🌍 Translated: "${text}" → "${translation}"`);
         }
       });
 
       translationCache.batchSet(translationMap, targetLang, sourceLang);
-      console.log(`💾 Cached ${missing.length} translation(s)`);
+      console.debug(`💾 Cached ${missing.length} translation(s)`);
     } catch (error) {
       console.error('❌ Error translating batch:', error);
     }
@@ -265,10 +277,10 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
 
   for (const text of texts) {
     try {
-      console.log(`  🔄 Translating: "${text.substring(0, 50)}..."`);
+      console.debug(`  🔄 Translating: "${text.substring(0, 50)}..."`);
       const translation = await translationService.translate(text, targetLang, sourceLang);
       translations.push(translation);
-      console.log(`  ✓ Result: "${translation.substring(0, 50)}..."`);
+      console.debug(`  ✓ Result: "${translation.substring(0, 50)}..."`);
     } catch (error) {
       console.error(`  ✗ Error translating "${text}":`, error);
       translations.push(text); // Fallback to original text
@@ -323,4 +335,4 @@ window.addEventListener('beforeunload', () => {
   }
 });
 
-console.log('SubTranslate content script loaded');
+console.info('SubTranslate content script loaded');
