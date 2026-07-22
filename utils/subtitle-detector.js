@@ -5,7 +5,7 @@
 
 class SubtitleDetector {
   constructor() {
-    // Selectors for different platforms
+    // Selectors for different platforms, kept as a fallback layer.
     this.selectors = {
       youtube: [
         '.captions-text',
@@ -47,6 +47,10 @@ class SubtitleDetector {
         '.vjs-text-track-cue'
       ]
     };
+
+    this.subtitleHints = ['subtitle', 'caption', 'timedtext', 'cue', 'cc', 'track', 'transcript'];
+    this.playerHints = ['player', 'video', 'stream', 'media', 'embed', 'screen', 'content'];
+    this.excludedKeywords = ['nav', 'menu', 'button', 'logo', 'icon', 'score', 'time', 'share', 'settings', 'volume', 'seek', 'progress', 'playlist', 'banner', 'cookie', 'modal', 'tooltip', 'chat', 'comment'];
   }
 
   /**
@@ -67,7 +71,8 @@ class SubtitleDetector {
   }
 
   /**
-   * Get all subtitle elements on the page
+   * Get all subtitle elements on the page.
+   * This scans player-like regions of the DOM rather than relying only on a fixed list of selectors.
    * @returns {Array<Element>} Array of subtitle DOM elements
    */
   getSubtitleElements() {
@@ -78,6 +83,11 @@ class SubtitleDetector {
     ];
 
     const elements = new Set();
+    const roots = this.getSearchRoots();
+
+    roots.forEach(root => {
+      this.collectSubtitleCandidates(root, elements);
+    });
 
     for (const selector of selectorsToTry) {
       try {
@@ -97,32 +107,146 @@ class SubtitleDetector {
   }
 
   /**
-   * Check if an element is a valid subtitle element
+   * Build a list of likely player-related roots to scan.
+   * @returns {Array<Element>} Roots to inspect
+   */
+  getSearchRoots() {
+    const roots = [];
+    const seen = new Set();
+
+    const addRoot = (element) => {
+      if (!element || seen.has(element)) return;
+      seen.add(element);
+      roots.push(element);
+    };
+
+    const selectors = [
+      'video',
+      '[role="application"]',
+      '[class*="player" i]',
+      '[id*="player" i]',
+      '[data-testid*="player" i]',
+      '[class*="video" i]',
+      '[id*="video" i]',
+      '[class*="stream" i]',
+      '[id*="stream" i]',
+      '[class*="media" i]',
+      '[id*="media" i]',
+      '[class*="embed" i]',
+      '[id*="embed" i]'
+    ];
+
+    selectors.forEach(selector => {
+      try {
+        document.querySelectorAll(selector).forEach(el => addRoot(el));
+      } catch (error) {
+        console.debug(`Invalid root selector: ${selector}`, error);
+      }
+    });
+
+    if (document.body) {
+      addRoot(document.body);
+    }
+
+    return roots;
+  }
+
+  /**
+   * Walk a subtree and collect likely subtitle-like elements.
+   * @param {Element} root - Root element to inspect
+   * @param {Set<Element>} elements - Accumulator of subtitle elements
+   */
+  collectSubtitleCandidates(root, elements) {
+    if (!root || !root.isConnected) return;
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+      acceptNode: (node) => {
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+          return NodeFilter.FILTER_REJECT;
+        }
+
+        const tagName = node.tagName.toLowerCase();
+        if (['script', 'style', 'svg'].includes(tagName)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+
+    while (walker.nextNode()) {
+      const el = walker.currentNode;
+      if (this.isValidSubtitleElement(el)) {
+        elements.add(el);
+      }
+    }
+  }
+
+  /**
+   * Check if an element is a valid subtitle element.
+   * The logic prefers elements that are visible, short, and appear inside player-like regions.
    * @param {Element} el - Element to check
    * @returns {boolean} True if element is likely a subtitle
    */
   isValidSubtitleElement(el) {
-    if (!el || !el.textContent) return false;
+    if (!el || !el.isConnected || !el.textContent) return false;
 
-    const text = el.textContent.trim();
-    
-    // Filter out very small text (usually not subtitles)
-    if (text.length < 2) return false;
+    const text = this.extractText(el);
+    if (!text || text.length < 2 || text.length > 160) return false;
 
-    // Filter out common non-subtitle elements
-    const classList = el.className.toLowerCase();
-    const excludedKeywords = ['nav', 'menu', 'button', 'logo', 'icon', 'score', 'time'];
-    if (excludedKeywords.some(keyword => classList.includes(keyword))) {
-      return false;
-    }
+    const className = (el.className || '').toString().toLowerCase();
+    const id = (el.id || '').toLowerCase();
+    const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    const tagName = (el.tagName || '').toLowerCase();
+    const textWords = text.split(/\s+/).filter(Boolean);
 
-    // Check if element is visible
+    if (textWords.length > 14) return false;
+    if (el.closest('button, a, input, select, textarea, [role="button"]')) return false;
+
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
       return false;
     }
 
-    return true;
+    const classList = `${className} ${id} ${ariaLabel} ${role}`;
+    if (this.excludedKeywords.some(keyword => classList.includes(keyword))) {
+      return false;
+    }
+
+    const hasSubtitleHint = this.subtitleHints.some(keyword => classList.includes(keyword));
+    const hasAncestorHint = this.hasAncestorHint(el);
+    const isInsidePlayer = this.hasAncestorHint(el, this.playerHints);
+    const isTextLikeElement = ['span', 'div', 'p', 'font', 'b', 'strong', 'small'].includes(tagName);
+    const fontSize = parseFloat(style.fontSize) || 0;
+    const isSmallText = fontSize <= 28 || textWords.length <= 8;
+
+    return (hasSubtitleHint || hasAncestorHint || (isInsidePlayer && isTextLikeElement && isSmallText));
+  }
+
+  /**
+   * Check whether an element or one of its ancestors has a matching hint.
+   * @param {Element} el - Element to inspect
+   * @param {Array<string>} hints - Hint keywords
+   * @returns {boolean}
+   */
+  hasAncestorHint(el, hints = this.subtitleHints) {
+    let current = el;
+    while (current) {
+      const className = (current.className || '').toString().toLowerCase();
+      const id = (current.id || '').toLowerCase();
+      const ariaLabel = (current.getAttribute('aria-label') || '').toLowerCase();
+      const role = (current.getAttribute('role') || '').toLowerCase();
+      const combined = `${className} ${id} ${ariaLabel} ${role}`;
+
+      if (hints.some(keyword => combined.includes(keyword))) {
+        return true;
+      }
+
+      current = current.parentElement;
+    }
+
+    return false;
   }
 
   /**
