@@ -286,6 +286,17 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
   return translations;
 }
 
+function buildDisplayText(element, translatedText) {
+  const originalText = element.dataset.originalText || element.textContent || '';
+  const trimmedOriginal = originalText.trim();
+  const trimmedTranslation = (translatedText || '').trim();
+
+  if (!trimmedOriginal) return trimmedTranslation;
+  if (!trimmedTranslation || trimmedTranslation === trimmedOriginal) return trimmedOriginal;
+
+  return `${trimmedOriginal} • ${trimmedTranslation}`;
+}
+
 /**
  * Apply translation to element without flickering
  * Uses opacity transitions to avoid visual flicker
@@ -295,8 +306,10 @@ function applyTranslationWithoutFlicker(element, translatedText) {
 
   // Store original text for restoration
   if (!element.dataset.originalText) {
-    element.dataset.originalText = element.textContent;
+    element.dataset.originalText = element.textContent || '';
   }
+
+  const displayText = buildDisplayText(element, translatedText);
 
   // Use requestAnimationFrame for smooth transition
   requestAnimationFrame(() => {
@@ -305,8 +318,8 @@ function applyTranslationWithoutFlicker(element, translatedText) {
     element.style.opacity = '0.7';
 
     requestAnimationFrame(() => {
-      // Update text
-      element.textContent = translatedText;
+      // Update text while preserving the original subtitle
+      element.textContent = displayText;
       element.style.opacity = '1';
 
       // Clean up transition after completion
@@ -325,10 +338,10 @@ function applyTranslation(element, translatedText) {
 
   // Store original text for restoration
   if (!element.dataset.originalText) {
-    element.dataset.originalText = element.textContent;
+    element.dataset.originalText = element.textContent || '';
   }
 
-  element.textContent = translatedText;
+  element.textContent = buildDisplayText(element, translatedText);
 }
 
 /**
