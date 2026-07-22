@@ -174,7 +174,7 @@ async function processVisibleSubtitles() {
     const textsToTranslate = [];
     const elementMap = new Map();
 
-    // Collect unique new texts to translate
+    // Collect unique new texts to translate without modifying the visible subtitle
     for (const el of subtitleElements) {
       const text = subtitleDetector.extractText(el);
       
@@ -187,12 +187,6 @@ async function processVisibleSubtitles() {
         elementMap.set(text, el);
         lastProcessedTexts.add(text);
         console.log(`✨ New subtitle found: "${text}"`);
-      } else if (subtitleDetector.isAlreadyTranslated(el)) {
-        // Verify translated content is still correct
-        const translatedText = subtitleDetector.getPreviousTranslation(el);
-        if (translatedText && el.textContent !== translatedText) {
-          applyTranslation(el, translatedText);
-        }
       }
     }
 
@@ -227,13 +221,12 @@ async function translateBatch(textsToTranslate) {
     console.log(`✅ ${Object.keys(cached).length} translations found in cache`);
   }
 
-  // Apply cached translations
+  // Apply cached translations to the tracking metadata only, without changing visible captions
   Object.entries(cached).forEach(([text, translation]) => {
     const element = textsToTranslate.find(item => item.text === text)?.element;
     if (element) {
       subtitleDetector.markAsTranslated(element, translation);
-      applyTranslationWithoutFlicker(element, translation);
-      console.log(`📦 Applied cached: "${text}" → "${translation}"`);
+      console.log(`📦 Cached translation for "${text}": "${translation}"`);
     }
   });
 
@@ -252,7 +245,6 @@ async function translateBatch(textsToTranslate) {
         const element = textsToTranslate.find(item => item.text === text)?.element;
         if (element) {
           subtitleDetector.markAsTranslated(element, translation);
-          applyTranslationWithoutFlicker(element, translation);
           console.log(`🌍 Translated: "${text}" → "${translation}"`);
         }
       });
@@ -286,63 +278,6 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
   return translations;
 }
 
-function buildDisplayText(element, translatedText) {
-  const originalText = element.dataset.originalText || element.textContent || '';
-  const trimmedOriginal = originalText.trim();
-  const trimmedTranslation = (translatedText || '').trim();
-
-  if (!trimmedOriginal) return trimmedTranslation;
-  if (!trimmedTranslation || trimmedTranslation === trimmedOriginal) return trimmedOriginal;
-
-  return `${trimmedOriginal} • ${trimmedTranslation}`;
-}
-
-/**
- * Apply translation to element without flickering
- * Uses opacity transitions to avoid visual flicker
- */
-function applyTranslationWithoutFlicker(element, translatedText) {
-  if (!element) return;
-
-  // Store original text for restoration
-  if (!element.dataset.originalText) {
-    element.dataset.originalText = element.textContent || '';
-  }
-
-  const displayText = buildDisplayText(element, translatedText);
-
-  // Use requestAnimationFrame for smooth transition
-  requestAnimationFrame(() => {
-    // Reduce opacity for transition
-    element.style.transition = 'opacity 0.1s ease-in-out';
-    element.style.opacity = '0.7';
-
-    requestAnimationFrame(() => {
-      // Update text while preserving the original subtitle
-      element.textContent = displayText;
-      element.style.opacity = '1';
-
-      // Clean up transition after completion
-      setTimeout(() => {
-        element.style.transition = '';
-      }, 150);
-    });
-  });
-}
-
-/**
- * Apply translation directly (used for cached translations)
- */
-function applyTranslation(element, translatedText) {
-  if (!element) return;
-
-  // Store original text for restoration
-  if (!element.dataset.originalText) {
-    element.dataset.originalText = element.textContent || '';
-  }
-
-  element.textContent = buildDisplayText(element, translatedText);
-}
 
 /**
  * Listen for messages from background script or popup
