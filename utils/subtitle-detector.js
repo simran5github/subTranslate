@@ -250,6 +250,22 @@ class SubtitleDetector {
       return true;
     }
 
+    if (/^(?:play|pause|stop|mute|unmute|rewind|forward|seek|skip|next|previous|back|fullscreen|exit fullscreen|close)\b/i.test(normalized)) {
+      return true;
+    }
+
+    if (/^(?:play|pause|mute|seek|fullscreen)\s*\([^)]+\)$/i.test(normalized)) {
+      return true;
+    }
+
+    if (/(?:^|[\s·•:-])(?:s|season)\s*\d+(?:\s*[·•:-]\s*(?:e|ep\.?|episode)\s*\d+|(?:\s+e|\s+ep\.?|\s+episode)\s*\d+)/i.test(text)) {
+      return true;
+    }
+
+    if (/^\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:\/|to|-|–)\s*\d{1,2}:\d{2}(?::\d{2})?)?$/.test(text)) {
+      return true;
+    }
+
     if (textWords.length <= 2 && this.shortStopWords.has(textWords[0]?.toLowerCase())) {
       return true;
     }
