@@ -70,56 +70,24 @@ class LibreTranslateProvider {
   }
 
   async translate(text, targetLang, sourceLang = 'en') {
-    // Convert language codes if needed (e.g., 'en' -> 'en-US')
-    const sourceCode = this._normalizeLanguageCode(sourceLang);
-    const targetCode = this._normalizeLanguageCode(targetLang);
-    
     try {
-      // Use MyMemory API which is CORS-friendly
-      const url = `${this.apiUrl}?q=${encodeURIComponent(text)}&langpair=${sourceCode}|${targetCode}`;
-      const response = await fetch(url);
+      const response = await chrome.runtime.sendMessage({
+        action: 'translateBatch',
+        texts: [text],
+        targetLang,
+        sourceLang
+      });
 
-      if (!response.ok) {
-        throw new Error(`Translation API error: ${response.status}`);
+      if (!response?.success || !Array.isArray(response.translations)) {
+        throw new Error(response?.error || 'Translation service unavailable');
       }
 
-      const data = await response.json();
-      
-      // MyMemory returns translated text in data.responseData.translatedText
-      if (data.responseStatus === 200 && data.responseData.translatedText) {
-        return data.responseData.translatedText;
-      } else if (data.responseData.translatedText === text) {
-        // MyMemory sometimes returns original text if translation not found
-        console.warn(`No translation found for: ${text}`);
-        return text;
-      } else {
-        throw new Error('Translation service unavailable');
-      }
+      return response.translations[0] || text;
     } catch (error) {
       console.error('Translation error:', error);
       // Return original text on error
       return text;
     }
-  }
-
-  _normalizeLanguageCode(code) {
-    // Convert two-letter codes to full language-region codes for MyMemory
-    const codeMap = {
-      'en': 'en-US',
-      'fr': 'fr-FR',
-      'es': 'es-ES',
-      'de': 'de-DE',
-      'it': 'it-IT',
-      'pt': 'pt-PT',
-      'ru': 'ru-RU',
-      'ja': 'ja-JP',
-      'ko': 'ko-KR',
-      'zh': 'zh-CN',
-      'ar': 'ar-SA',
-      'hi': 'hi-IN'
-    };
-    
-    return codeMap[code] || code;
   }
 
   async getLanguages() {
@@ -191,21 +159,18 @@ class MyMemoryProvider {
   }
 
   async translate(text, targetLang, sourceLang = 'en') {
-    const response = await fetch(
-      `${this.apiUrl}/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
-    );
+    const response = await chrome.runtime.sendMessage({
+      action: 'translateBatch',
+      texts: [text],
+      targetLang,
+      sourceLang
+    });
 
-    if (!response.ok) {
-      throw new Error(`MyMemory API error: ${response.status}`);
+    if (!response?.success || !Array.isArray(response.translations)) {
+      throw new Error(response?.error || 'MyMemory service unavailable');
     }
 
-    const data = await response.json();
-    
-    if (data.responseStatus === 200) {
-      return data.responseData.translatedText;
-    } else {
-      throw new Error(`MyMemory error: ${data.responseDetails}`);
-    }
+    return response.translations[0] || text;
   }
 }
 

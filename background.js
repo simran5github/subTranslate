@@ -59,9 +59,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
  */
 async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse) {
   try {
-    // This would integrate with a translation service
-    // For now, we'll just echo back the texts
-    const translations = texts.map(text => text); // Placeholder
+    const translations = await Promise.all(
+      texts.map(text => translateText(text, targetLang, sourceLang))
+    );
 
     sendResponse({
       success: true,
@@ -74,6 +74,25 @@ async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse)
       error: error.message
     });
   }
+}
+
+/**
+ * Translate one text from the service worker, where host permissions apply.
+ */
+async function translateText(text, targetLang, sourceLang = 'en') {
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Translation API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (data.responseStatus !== 200 || !data.responseData?.translatedText) {
+    throw new Error(`Translation service unavailable: ${data.responseDetails || 'unknown error'}`);
+  }
+
+  return data.responseData.translatedText;
 }
 
 /**
