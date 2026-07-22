@@ -134,3 +134,38 @@ test('accepts short caption-like text in a player-like region', () => {
     restore();
   }
 });
+
+test('rejects title and metadata strings that appear in player UI', () => {
+  const restore = installDomMocks();
+  try {
+    const detector = new SubtitleDetector();
+    const player = new MockElement({ tagName: 'div', className: 'player', id: 'player' });
+
+    const title = new MockElement({
+      tagName: 'span',
+      textContent: 'Lupin',
+      parentElement: player,
+    });
+    title.parentElement = player;
+
+    const quality = new MockElement({
+      tagName: 'span',
+      textContent: 'Quality:auto',
+      parentElement: player,
+    });
+    quality.parentElement = player;
+
+    const chapter = new MockElement({
+      tagName: 'span',
+      textContent: 'Chapter 1',
+      parentElement: player,
+    });
+    chapter.parentElement = player;
+
+    assert.equal(detector.isValidSubtitleElement(title), false);
+    assert.equal(detector.isValidSubtitleElement(quality), false);
+    assert.equal(detector.isValidSubtitleElement(chapter), false);
+  } finally {
+    restore();
+  }
+});

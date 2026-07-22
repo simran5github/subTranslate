@@ -50,8 +50,8 @@ class SubtitleDetector {
 
     this.subtitleHints = ['subtitle', 'caption', 'timedtext', 'cue', 'cc', 'track', 'transcript'];
     this.playerHints = ['player', 'video', 'stream', 'media', 'embed', 'screen', 'content'];
-    this.excludedKeywords = ['nav', 'menu', 'button', 'logo', 'icon', 'score', 'time', 'share', 'settings', 'volume', 'seek', 'progress', 'playlist', 'banner', 'cookie', 'modal', 'tooltip', 'chat', 'comment', 'loading', 'season', 'episode', 'metadata', 'description', 'overview', 'trailer', 'cast', 'director', 'genre', 'rating', 'quality', 'server', 'private', 'home', 'movies', 'series', 'cinema'];
-    this.metadataKeywords = ['season', 'episode', 'series', 'movie', 'film', 'cast', 'director', 'genre', 'rating', 'trailer', 'overview', 'description', 'loading', 'server', 'private', 'home', 'cinema'];
+    this.excludedKeywords = ['nav', 'menu', 'button', 'logo', 'icon', 'score', 'time', 'share', 'settings', 'volume', 'seek', 'progress', 'playlist', 'banner', 'cookie', 'modal', 'tooltip', 'chat', 'comment', 'loading', 'season', 'episode', 'metadata', 'description', 'overview', 'trailer', 'cast', 'director', 'genre', 'rating', 'quality', 'server', 'private', 'home', 'movies', 'series', 'cinema', 'download', 'premium', 'standard', 'free', 'source', 'sources', 'stream', 'streaming', 'playing', 'production', 'networks', 'companies', 'countries', 'languages', 'disclaimer', 'hosting'];
+    this.metadataKeywords = ['season', 'episode', 'series', 'movie', 'film', 'cast', 'director', 'genre', 'rating', 'trailer', 'overview', 'description', 'loading', 'server', 'private', 'home', 'cinema', 'chapter', 'quality', 'current source', 'download', 'torrent', 'premium', 'standard', 'free', 'source', 'sources', 'stream ready', 'now playing', 'playing', 'production', 'networks', 'companies', 'countries', 'languages', 'first aired', 'important disclaimer', 'third-party content', 'no file hosting', 'powered by', 'built with', 'you may also like'];
     this.shortStopWords = new Set(['the', 'and', 'you', 'are', 'for', 'this', 'that', 'have', 'with', 'will', 'from', 'your', 'into', 'about', 'just', 'like', 'when', 'what', 'where', 'there', 'here']);
   }
 
@@ -230,9 +230,10 @@ class SubtitleDetector {
     }
 
     const hasCaptionCaseStructure = this.hasCaptionCaseStructure(text, textWords);
-    const isLikelySubtitle = hasSubtitleHint || hasAncestorHint || (isInsidePlayer && isTextLikeElement && isSmallText);
+    const hasStrongTextStructure = this.hasStrongTextStructure(text, textWords);
+    const isLikelySubtitle = hasSubtitleHint || hasAncestorHint || (isInsidePlayer && isTextLikeElement && isSmallText && hasStrongTextStructure);
 
-    return isLikelySubtitle && (hasCaptionCaseStructure || isInsidePlayer || hasSubtitleHint || hasAncestorHint);
+    return isLikelySubtitle && (hasCaptionCaseStructure || hasStrongTextStructure || hasSubtitleHint || hasAncestorHint);
   }
 
   /**
@@ -276,6 +277,24 @@ class SubtitleDetector {
     if (hasPunctuation) return true;
     if (textWords.length <= 4 && !hasSentenceCase && !hasMixedCase) return true;
     return textWords.length <= 8;
+  }
+
+  /**
+   * Check whether the text has enough structure to be a real caption instead of a title/UI label.
+   * @param {string} text - Extracted text
+   * @param {Array<string>} textWords - Tokenized words
+   * @returns {boolean}
+   */
+  hasStrongTextStructure(text, textWords) {
+    if (textWords.length <= 1) return false;
+
+    const hasPunctuation = /[.!?]/.test(text);
+    const hasWhitespace = text.includes(' ');
+    const hasSentenceCase = textWords.some(word => /^[A-Z]/.test(word));
+    const hasMixedCase = /[a-z][A-Z]/.test(text);
+    const hasWordLikeContent = textWords.every(word => word.length >= 2 || /\d/.test(word));
+
+    return hasPunctuation || hasWhitespace || hasSentenceCase || hasMixedCase || hasWordLikeContent;
   }
 
   /**
