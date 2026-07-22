@@ -8,6 +8,7 @@
     "activeTab",
     "scripting",
     "webRequest",
+    "webRequestBlocking",
     "tabs"
   ],
   "host_permissions": [
@@ -34,6 +35,7 @@
         "utils/cache.js",
         "utils/storage.js",
         "utils/subtitle-detector.js",
+        "utils/subtitle-file-handler.js",
         "content-script.js"
       ],
       "run_at": "document_start",
