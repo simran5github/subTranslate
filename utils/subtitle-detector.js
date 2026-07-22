@@ -50,7 +50,9 @@ class SubtitleDetector {
 
     this.subtitleHints = ['subtitle', 'caption', 'timedtext', 'cue', 'cc', 'track', 'transcript'];
     this.playerHints = ['player', 'video', 'stream', 'media', 'embed', 'screen', 'content'];
-    this.excludedKeywords = ['nav', 'menu', 'button', 'logo', 'icon', 'score', 'time', 'share', 'settings', 'volume', 'seek', 'progress', 'playlist', 'banner', 'cookie', 'modal', 'tooltip', 'chat', 'comment'];
+    this.excludedKeywords = ['nav', 'menu', 'button', 'logo', 'icon', 'score', 'time', 'share', 'settings', 'volume', 'seek', 'progress', 'playlist', 'banner', 'cookie', 'modal', 'tooltip', 'chat', 'comment', 'loading', 'season', 'episode', 'metadata', 'description', 'overview', 'trailer', 'cast', 'director', 'genre', 'rating', 'quality', 'server', 'private', 'home', 'movies', 'series', 'cinema'];
+    this.metadataKeywords = ['season', 'episode', 'series', 'movie', 'film', 'cast', 'director', 'genre', 'rating', 'trailer', 'overview', 'description', 'loading', 'server', 'private', 'home', 'cinema'];
+    this.shortStopWords = new Set(['the', 'and', 'you', 'are', 'for', 'this', 'that', 'have', 'with', 'will', 'from', 'your', 'into', 'about', 'just', 'like', 'when', 'what', 'where', 'there', 'here']);
   }
 
   /**
@@ -202,6 +204,7 @@ class SubtitleDetector {
     const textWords = text.split(/\s+/).filter(Boolean);
 
     if (textWords.length > 14) return false;
+    if (textWords.length < 1) return false;
     if (el.closest('button, a, input, select, textarea, [role="button"]')) return false;
 
     const style = window.getComputedStyle(el);
@@ -220,8 +223,59 @@ class SubtitleDetector {
     const isTextLikeElement = ['span', 'div', 'p', 'font', 'b', 'strong', 'small'].includes(tagName);
     const fontSize = parseFloat(style.fontSize) || 0;
     const isSmallText = fontSize <= 28 || textWords.length <= 8;
+    const looksLikeMetadata = this.looksLikeMetadata(text, textWords, classList);
 
-    return (hasSubtitleHint || hasAncestorHint || (isInsidePlayer && isTextLikeElement && isSmallText));
+    if (looksLikeMetadata) {
+      return false;
+    }
+
+    const hasCaptionCaseStructure = this.hasCaptionCaseStructure(text, textWords);
+    const isLikelySubtitle = hasSubtitleHint || hasAncestorHint || (isInsidePlayer && isTextLikeElement && isSmallText);
+
+    return isLikelySubtitle && (hasCaptionCaseStructure || isInsidePlayer || hasSubtitleHint || hasAncestorHint);
+  }
+
+  /**
+   * Check whether text looks like metadata or UI text rather than subtitle captions.
+   * @param {string} text - Extracted text
+   * @param {Array<string>} textWords - Tokenized words
+   * @param {string} classList - Combined element classes/ids/aria labels/role
+   * @returns {boolean}
+   */
+  looksLikeMetadata(text, textWords, classList) {
+    const normalized = text.toLowerCase();
+
+    if (this.metadataKeywords.some(keyword => normalized.includes(keyword))) {
+      return true;
+    }
+
+    if (textWords.length <= 2 && this.shortStopWords.has(textWords[0]?.toLowerCase())) {
+      return true;
+    }
+
+    if (classList.includes('title') || classList.includes('episode') || classList.includes('series') || classList.includes('info')) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check for caption-like punctuation and sentence structure.
+   * @param {string} text - Extracted text
+   * @param {Array<string>} textWords - Tokenized words
+   * @returns {boolean}
+   */
+  hasCaptionCaseStructure(text, textWords) {
+    if (textWords.length <= 1) return false;
+
+    const hasPunctuation = /[.!?]/.test(text);
+    const hasSentenceCase = textWords.some(word => /^[A-Z]/.test(word));
+    const hasMixedCase = /[a-z][A-Z]/.test(text);
+
+    if (hasPunctuation) return true;
+    if (textWords.length <= 4 && !hasSentenceCase && !hasMixedCase) return true;
+    return textWords.length <= 8;
   }
 
   /**
