@@ -16,6 +16,8 @@ let lastProcessedTexts = new Set();
 let processingQueue = [];
 let isProcessing = false;
 let hasLoggedNoSubtitles = false;
+// Track provider cooldowns (ms timestamp until which provider is paused)
+const providerCooldowns = {};
 
 /**
  * Initialize extension components
@@ -291,7 +293,23 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
     while (attempt < maxAttempts) {
       attempt++;
       try {
-        console.debug(`  🔄 Translating (attempt ${attempt}/${maxAttempts}): "${text.substring(0, 50)}..."`);
+        // If current provider is on cooldown, attempt to switch to alternative provider
+        const currentProvider = translationService.provider;
+        const cooldownUntil = providerCooldowns[currentProvider] || 0;
+        if (cooldownUntil > Date.now()) {
+          console.warn(`⏸️ Provider '${currentProvider}' is on cooldown until ${new Date(cooldownUntil).toISOString()}`);
+          // Pick another available provider that is not on cooldown
+          const alternatives = translationService.getAvailableProviders().filter(p => p !== currentProvider && (providerCooldowns[p] || 0) <= Date.now());
+          if (alternatives.length > 0) {
+            console.info(`🔁 Switching provider from '${currentProvider}' to '${alternatives[0]}'`);
+            translationService.switchProvider(alternatives[0]);
+          } else {
+            // No alternatives, abort early
+            throw new Error('No available translation providers (all on cooldown)');
+          }
+        }
+
+        console.debug(`  🔄 Translating (attempt ${attempt}/${maxAttempts}) with provider '${translationService.provider}': "${text.substring(0, 50)}..."`);
         const translation = await translationService.translate(text, targetLang, sourceLang);
         if (translation && translation !== text) {
           console.debug(`  ✓ Result: "${translation.substring(0, 50)}..."`);
@@ -301,6 +319,24 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
         throw new Error('Translation identical to source or empty');
       } catch (error) {
         console.warn(`  ✗ Attempt ${attempt} failed for "${text}": ${error.message}`);
+        // If rate limited (429), put current provider on cooldown and try fallback
+        const errMsg = String(error.message || '').toLowerCase();
+        if (errMsg.includes('429') || errMsg.includes('rate limit') || errMsg.includes('too many requests')) {
+          const providerName = translationService.provider;
+          const cooldownMs = 5 * 60 * 1000; // 5 minutes
+          providerCooldowns[providerName] = Date.now() + cooldownMs;
+          console.warn(`🚫 Provider '${providerName}' rate-limited — pausing for ${Math.round(cooldownMs/1000)}s`);
+          // Attempt to switch to another provider immediately if available
+          const alternatives = translationService.getAvailableProviders().filter(p => p !== providerName && (providerCooldowns[p] || 0) <= Date.now());
+          if (alternatives.length > 0) {
+            try {
+              translationService.switchProvider(alternatives[0]);
+              console.info(`🔁 Switched provider to '${alternatives[0]}' after rate-limit`);
+            } catch (swErr) {
+              console.error('Provider switch failed:', swErr);
+            }
+          }
+        }
         if (attempt >= maxAttempts) {
           console.error(`  ✖ All ${maxAttempts} attempts failed for "${text}"`);
           return null;

@@ -85,8 +85,8 @@ class LibreTranslateProvider {
       return response.translations[0] || text;
     } catch (error) {
       console.error('Translation error:', error);
-      // Return original text on error
-      return text;
+      // Re-throw so callers can handle rate limits or provider failures
+      throw error;
     }
   }
 
