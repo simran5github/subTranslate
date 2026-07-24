@@ -105,7 +105,8 @@ class TranslationCache {
 
     texts.forEach(text => {
       const translation = this.get(text, targetLang, sourceLang);
-      if (translation) {
+      // If the cached translation is identical to the source text, treat it as missing
+      if (translation && translation !== text) {
         cached[text] = translation;
       } else {
         missing.push(text);

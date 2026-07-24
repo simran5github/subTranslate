@@ -197,7 +197,6 @@ async function processVisibleSubtitles() {
       ) {
         textsToTranslate.push({ text, element: el });
         elementMap.set(text, el);
-        lastProcessedTexts.add(text);
         console.debug(`✨ New subtitle found: "${text}"`);
       }
     }
@@ -238,6 +237,8 @@ async function translateBatch(textsToTranslate) {
     const element = textsToTranslate.find(item => item.text === text)?.element;
     if (element) {
       subtitleDetector.markAsTranslated(element, translation);
+      // Mark cached texts as processed so we don't re-request them
+      lastProcessedTexts.add(text);
       console.debug(`📦 Cached translation for "${text}": "${translation}"`);
     }
   });
@@ -252,12 +253,18 @@ async function translateBatch(textsToTranslate) {
       const translationMap = {};
       missing.forEach((text, index) => {
         const translation = translations[index];
-        translationMap[text] = translation;
-        
         const element = textsToTranslate.find(item => item.text === text)?.element;
-        if (element) {
-          subtitleDetector.markAsTranslated(element, translation);
-          console.info(`🌍 Translated: "${text}" → "${translation}"`);
+
+        // Only cache and mark as translated when we received a valid translation
+        if (translation && translation !== text) {
+          translationMap[text] = translation;
+          if (element) {
+            subtitleDetector.markAsTranslated(element, translation);
+            lastProcessedTexts.add(text);
+            console.info(`🌍 Translated: "${text}" → "${translation}"`);
+          }
+        } else {
+          console.warn(`⚠️ Translation failed or identical for "${text}"; will retry later`);
         }
       });
 
@@ -275,16 +282,41 @@ async function translateBatch(textsToTranslate) {
 async function translateTexts(texts, targetLang, sourceLang = 'en') {
   const translations = [];
 
-  for (const text of texts) {
-    try {
-      console.debug(`  🔄 Translating: "${text.substring(0, 50)}..."`);
-      const translation = await translationService.translate(text, targetLang, sourceLang);
-      translations.push(translation);
-      console.debug(`  ✓ Result: "${translation.substring(0, 50)}..."`);
-    } catch (error) {
-      console.error(`  ✗ Error translating "${text}":`, error);
-      translations.push(text); // Fallback to original text
+  // Helper: sleep for ms
+  const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
+  // Helper: translate with exponential backoff
+  async function translateWithRetry(text, targetLang, sourceLang = 'en', maxAttempts = 3, baseDelay = 250) {
+    let attempt = 0;
+    while (attempt < maxAttempts) {
+      attempt++;
+      try {
+        console.debug(`  🔄 Translating (attempt ${attempt}/${maxAttempts}): "${text.substring(0, 50)}..."`);
+        const translation = await translationService.translate(text, targetLang, sourceLang);
+        if (translation && translation !== text) {
+          console.debug(`  ✓ Result: "${translation.substring(0, 50)}..."`);
+          return translation;
+        }
+        // Treat identical translation as failure to trigger retry
+        throw new Error('Translation identical to source or empty');
+      } catch (error) {
+        console.warn(`  ✗ Attempt ${attempt} failed for "${text}": ${error.message}`);
+        if (attempt >= maxAttempts) {
+          console.error(`  ✖ All ${maxAttempts} attempts failed for "${text}"`);
+          return null;
+        }
+        // Exponential backoff with small jitter
+        const delay = baseDelay * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 150);
+        console.debug(`    ↻ Retrying in ${delay}ms...`);
+        await sleep(delay);
+      }
     }
+    return null;
+  }
+
+  for (const text of texts) {
+    const translation = await translateWithRetry(text, targetLang, sourceLang);
+    translations.push(translation);
   }
 
   return translations;
