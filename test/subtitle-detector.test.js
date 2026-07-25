@@ -170,7 +170,7 @@ test('rejects title and metadata strings that appear in player UI', () => {
   }
 });
 
-test('rejects playback labels, episode labels, and timestamps', () => {
+test('rejects playback labels, episode labels, timestamps, and UI speed indicators', () => {
   const restore = installDomMocks();
   try {
     const detector = new SubtitleDetector();
@@ -197,9 +197,17 @@ test('rejects playback labels, episode labels, and timestamps', () => {
     });
     timestamp.parentElement = player;
 
+    const speedControl = new MockElement({
+      tagName: 'span',
+      textContent: '2x',
+      parentElement: player,
+    });
+    speedControl.parentElement = player;
+
     assert.equal(detector.isValidSubtitleElement(play), false);
     assert.equal(detector.isValidSubtitleElement(episode), false);
     assert.equal(detector.isValidSubtitleElement(timestamp), false);
+    assert.equal(detector.isValidSubtitleElement(speedControl), false);
   } finally {
     restore();
   }

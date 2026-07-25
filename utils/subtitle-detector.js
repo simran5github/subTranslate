@@ -51,8 +51,14 @@ class SubtitleDetector {
     this.subtitleHints = ['subtitle', 'caption', 'timedtext', 'cue', 'cc', 'track', 'transcript'];
     this.playerHints = ['player', 'video', 'stream', 'media', 'embed', 'screen', 'content'];
     this.excludedKeywords = ['nav', 'menu', 'button', 'logo', 'icon', 'score', 'time', 'share', 'settings', 'volume', 'seek', 'progress', 'playlist', 'banner', 'cookie', 'modal', 'tooltip', 'chat', 'comment', 'loading', 'season', 'episode', 'metadata', 'description', 'overview', 'trailer', 'cast', 'director', 'genre', 'rating', 'quality', 'server', 'private', 'home', 'movies', 'series', 'cinema', 'download', 'premium', 'standard', 'free', 'source', 'sources', 'stream', 'streaming', 'playing', 'production', 'networks', 'companies', 'countries', 'languages', 'disclaimer', 'hosting'];
-    this.metadataKeywords = ['season', 'episode', 'series', 'movie', 'film', 'cast', 'director', 'genre', 'rating', 'trailer', 'overview', 'description', 'loading', 'server', 'private', 'home', 'cinema', 'chapter', 'quality', 'current source', 'download', 'torrent', 'premium', 'standard', 'free', 'source', 'sources', 'stream ready', 'now playing', 'playing', 'production', 'networks', 'companies', 'countries', 'languages', 'first aired', 'important disclaimer', 'third-party content', 'no file hosting', 'powered by', 'built with', 'you may also like'];
-    this.shortStopWords = new Set(['the', 'and', 'you', 'are', 'for', 'this', 'that', 'have', 'with', 'will', 'from', 'your', 'into', 'about', 'just', 'like', 'when', 'what', 'where', 'there', 'here']);
+    this.metadataKeywords = ['season', 'episode', 'series', 'movie', 'film', 'cast', 'director', 'genre', 'rating', 'trailer', 'overview', 'description', 'loading', 'server', 'private', 'home', 'cinema', 'chapter', 'quality', 'current source', 'download', 'torrent', 'premium', 'standard', 'free', 'source', 'sources', 'stream ready', 'now playing', 'playing', 'production', 'networks', 'companies', 'countries', 'languages', 'first aired', 'important disclaimer', 'third-party content', 'no file hosting', 'powered by', 'built with', 'you may also like'];    this.invalidSubtitlePatterns = [
+      /^\d+(?:\.\d+)?x$/i,
+      /^\d+(?:\.\d+)?%$/i,
+      /^\d+(?:kp?|mb|gb)$/i,
+      /^\d{3,4}p$/i,
+      /^(?:hd|sd|cc|auto|off|on|default|subtitles?|captions?|settings|quality|controls?)$/i,
+      /^(?:play|pause|stop|mute|unmute|rewind|forward|skip|next|previous|back|fullscreen|exit fullscreen|pip|theater mode|theatre mode)$/i
+    ];    this.shortStopWords = new Set(['the', 'and', 'you', 'are', 'for', 'this', 'that', 'have', 'with', 'will', 'from', 'your', 'into', 'about', 'just', 'like', 'when', 'what', 'where', 'there', 'here']);
   }
 
   /**
@@ -245,6 +251,10 @@ class SubtitleDetector {
    */
   looksLikeMetadata(text, textWords, classList) {
     const normalized = text.toLowerCase();
+
+    if (this.invalidSubtitlePatterns.some(pattern => pattern.test(normalized))) {
+      return true;
+    }
 
     if (this.metadataKeywords.some(keyword => normalized.includes(keyword))) {
       return true;
