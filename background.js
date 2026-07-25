@@ -6,6 +6,41 @@
 // Track which tabs have content scripts active
 const activeTabsMap = new Map();
 
+// In-memory translation cache: key -> { value, expires }
+const translationCache = new Map();
+// Provider cooldowns: provider -> timestamp(ms) until which provider is paused
+const providerCooldowns = {};
+const AVAILABLE_PROVIDERS = ['libretranslate', 'mymemory', 'google'];
+
+function cacheKey(text, source, target) {
+  return `${source}|${target}|${text}`;
+}
+
+function getCached(text, source, target) {
+  const key = cacheKey(text, source, target);
+  const entry = translationCache.get(key);
+  if (!entry) return null;
+  if (entry.expires && Date.now() > entry.expires) {
+    translationCache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function setCached(text, source, target, value, ttlMs = 24 * 60 * 60 * 1000) {
+  const key = cacheKey(text, source, target);
+  translationCache.set(key, { value, expires: Date.now() + ttlMs });
+}
+
+function isProviderAvailable(provider) {
+  const until = providerCooldowns[provider] || 0;
+  return until <= Date.now();
+}
+
+function setProviderCooldown(provider, msFromNow) {
+  providerCooldowns[provider] = Date.now() + msFromNow;
+}
+
 /**
  * Initialize the background service worker
  */
@@ -38,7 +73,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       console.log('[Content Script]', request.message);
       sendResponse({ received: true });
     } else if (request.action === 'translateBatch') {
-      handleTranslateBatch(request.texts, request.targetLang, request.sourceLang, sendResponse);
+      handleTranslateBatch(request.texts, request.targetLang, request.sourceLang, sendResponse, request.provider, request._chunkSize, request._chunkDelay);
       return true; // Indicate async response
     } else if (request.action === 'getStatus') {
       const tabId = sender.tab?.id;
@@ -62,27 +97,50 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
  * @param {string} sourceLang - Source language code
  * @param {Function} sendResponse - Callback to send response
  */
-async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse) {
-  // Support simple batching/chunking to avoid bursts that trigger rate limits.
+async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse, requestedProvider = null, chunkSizeOpt = null, chunkDelayOpt = null) {
   (async () => {
     try {
-      const chunkSize = (texts && texts._chunkSize) || 4;
-      const chunkDelay = (texts && texts._chunkDelay) || 200;
-      const provider = (texts && texts._provider) || 'mymemory';
+      const chunkSize = Number.isInteger(chunkSizeOpt) ? chunkSizeOpt : 4;
+      const chunkDelay = (chunkDelayOpt != null) ? chunkDelayOpt : 200;
 
       const cleanTexts = Array.isArray(texts) ? texts : [texts];
-      const results = [];
-
-      for (let i = 0; i < cleanTexts.length; i += chunkSize) {
-        const chunk = cleanTexts.slice(i, i + chunkSize);
-        const chunkResults = await Promise.all(chunk.map(t => translateText(t, targetLang, sourceLang, provider)));
-        results.push(...chunkResults);
-        if (i + chunkSize < cleanTexts.length) {
-          await new Promise(r => setTimeout(r, chunkDelay));
-        }
+      // First, consult cache
+      const missing = [];
+      const cachedMap = {};
+      const defaults = { ttlMs: 24 * 60 * 60 * 1000 };
+      for (const t of cleanTexts) {
+        const cached = getCached(t, sourceLang || 'en', targetLang);
+        if (cached != null) cachedMap[t] = cached; else missing.push(t);
       }
 
-      sendResponse({ success: true, translations: results });
+      if (missing.length === 0) {
+        const translations = cleanTexts.map(t => cachedMap[t]);
+        sendResponse({ success: true, translations });
+        return;
+      }
+
+      const results = [];
+      for (let i = 0; i < missing.length; i += chunkSize) {
+        const chunk = missing.slice(i, i + chunkSize);
+        const chunkResults = await Promise.all(chunk.map(async (t) => {
+          try {
+            const translated = await translateWithFallback(t, targetLang, sourceLang || 'en', requestedProvider);
+            if (translated && translated !== t) {
+              setCached(t, sourceLang || 'en', targetLang, translated, defaults.ttlMs);
+            }
+            return translated;
+          } catch (err) {
+            console.error('Translation error for text:', t, err);
+            return null;
+          }
+        }));
+
+        results.push(...chunkResults);
+        if (i + chunkSize < missing.length) await new Promise(r => setTimeout(r, chunkDelay));
+      }
+
+      const final = cleanTexts.map(t => (cachedMap[t] !== undefined ? cachedMap[t] : results.shift()));
+      sendResponse({ success: true, translations: final });
     } catch (error) {
       console.error('Translation error:', error);
       sendResponse({ success: false, error: error.message });
@@ -128,6 +186,59 @@ async function translateText(text, targetLang, sourceLang = 'en', provider = 'my
   }
 
   return data.responseData.translatedText;
+}
+
+async function translateWithFallback(text, targetLang, sourceLang = 'en', preferredProvider = null) {
+  const providers = [...AVAILABLE_PROVIDERS];
+  if (preferredProvider) {
+    const idx = providers.indexOf(preferredProvider);
+    if (idx !== -1) {
+      providers.splice(idx, 1);
+      providers.unshift(preferredProvider);
+    }
+  }
+
+  const settings = await new Promise((resolve) => {
+    chrome.storage.sync.get(['providerCooldownMs'], (res) => resolve(res || {}));
+  });
+  const cooldownMs = settings.providerCooldownMs || 300000;
+
+  for (const provider of providers) {
+    if (!isProviderAvailable(provider)) continue;
+    try {
+      const translated = await translateWithRetries(text, targetLang, sourceLang, provider);
+      if (translated) return translated;
+    } catch (err) {
+      const msg = String(err && err.message || err).toLowerCase();
+      if (msg.includes('429') || msg.includes('rate limit')) {
+        setProviderCooldown(provider, cooldownMs);
+        console.warn(`🚫 Provider '${provider}' rate-limited — pausing for ${Math.round(cooldownMs/1000)}s`);
+        continue;
+      }
+      continue;
+    }
+  }
+
+  throw new Error('All translation providers failed or are rate-limited');
+}
+
+async function translateWithRetries(text, targetLang, sourceLang = 'en', provider = 'mymemory', maxAttempts = 3) {
+  let attempt = 0;
+  const baseDelay = 200;
+  while (attempt < maxAttempts) {
+    attempt++;
+    try {
+      return await translateText(text, targetLang, sourceLang, provider);
+    } catch (err) {
+      const msg = String(err && err.message || err).toLowerCase();
+      if (msg.includes('429') || msg.includes('rate limit')) {
+        throw err;
+      }
+      if (attempt >= maxAttempts) throw err;
+      const delay = baseDelay * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 150);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
 }
 
 /**
