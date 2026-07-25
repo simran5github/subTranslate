@@ -14,6 +14,32 @@ const AVAILABLE_PROVIDERS = ['bergamot', 'libretranslate', 'mymemory', 'google']
 const BACKGROUND_CACHE_DATA_KEY = 'backgroundTranslationCache';
 const BACKGROUND_CACHE_TXT_KEY = 'backgroundTranslationCacheTxt';
 
+const translateBatchQueue = [];
+let translateBatchQueueActive = false;
+
+function enqueueTranslateBatch(texts, targetLang, sourceLang, sendResponse, requestedProvider = null, chunkSizeOpt = null, chunkDelayOpt = null) {
+  return new Promise((resolve) => {
+    translateBatchQueue.push({ texts, targetLang, sourceLang, sendResponse, requestedProvider, chunkSizeOpt, chunkDelayOpt, resolve });
+    if (!translateBatchQueueActive) {
+      processTranslateBatchQueue();
+    }
+  });
+}
+
+async function processTranslateBatchQueue() {
+  translateBatchQueueActive = true;
+  while (translateBatchQueue.length > 0) {
+    const { texts, targetLang, sourceLang, sendResponse, requestedProvider, chunkSizeOpt, chunkDelayOpt, resolve } = translateBatchQueue.shift();
+    try {
+      await handleTranslateBatch(texts, targetLang, sourceLang, sendResponse, requestedProvider, chunkSizeOpt, chunkDelayOpt);
+    } catch (error) {
+      console.error('Queued translateBatch failed:', error);
+    }
+    resolve();
+  }
+  translateBatchQueueActive = false;
+}
+
 function cacheKey(text, source, target) {
   return `${source}|${target}|${text}`;
 }
@@ -80,10 +106,54 @@ function getCached(text, source, target) {
   return entry.value;
 }
 
+function safeSendResponse(sendResponse, payload) {
+  try {
+    sendResponse(payload);
+  } catch (err) {
+    console.debug('Response channel closed before sendResponse could complete:', err && err.message ? err.message : err);
+  }
+}
+
+function runtimeAlive() {
+  try {
+    return !!chrome.runtime?.id;
+  } catch {
+    return false;
+  }
+}
+
 function setCached(text, source, target, value, ttlMs = 24 * 60 * 60 * 1000) {
   const key = cacheKey(text, source, target);
   translationCache.set(key, { value, expires: Date.now() + ttlMs });
   persistBackgroundCache();
+}
+
+const FETCH_TIMEOUT_MS = 7000;
+const TRANSLATION_PER_PROVIDER_TIMEOUT_MS = 7000;
+const TRANSLATION_PER_TEXT_TIMEOUT_MS = 12000;
+
+function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
+function withTimeout(promise, ms, errorMessage) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(errorMessage)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
 }
 
 function isProviderAvailable(provider) {
@@ -131,22 +201,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   try {
     if (request.action === 'log') {
       console.log('[Content Script]', request.message);
-      sendResponse({ received: true });
+      safeSendResponse(sendResponse, { received: true });
     } else if (request.action === 'translateBatch') {
-      handleTranslateBatch(request.texts, request.targetLang, request.sourceLang, sendResponse, request.provider, request._chunkSize, request._chunkDelay);
+      enqueueTranslateBatch(request.texts, request.targetLang, request.sourceLang, sendResponse, request.provider, request._chunkSize, request._chunkDelay);
       return true; // Indicate async response
     } else if (request.action === 'getStatus') {
       const tabId = sender.tab?.id;
       const status = activeTabsMap.get(tabId) || { url: sender.url, enabled: false };
-      sendResponse(status);
+      safeSendResponse(sendResponse, status);
     } else if (request.action === 'reportError') {
       console.error('[Content Script Error]', request.error, request.details);
-      sendResponse({ received: true });
+      safeSendResponse(sendResponse, { received: true });
     }
   } catch (error) {
     // Suppress errors from messages arriving when handler isn't ready
     console.debug('Message handler error (non-critical):', error.message);
-    sendResponse({ error: error.message });
+    safeSendResponse(sendResponse, { error: error.message });
   }
 });
 
@@ -158,8 +228,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
  * @param {Function} sendResponse - Callback to send response
  */
 async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse, requestedProvider = null, chunkSizeOpt = null, chunkDelayOpt = null) {
-  (async () => {
-    try {
+  try {
       const chunkSize = Number.isInteger(chunkSizeOpt) ? chunkSizeOpt : 4;
       const chunkDelay = (chunkDelayOpt != null) ? chunkDelayOpt : 200;
 
@@ -176,7 +245,7 @@ async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse,
       const uniqueMissing = [...new Set(missing)];
       if (uniqueMissing.length === 0) {
         const translations = cleanTexts.map(t => cachedMap[t]);
-        sendResponse({ success: true, translations });
+        safeSendResponse(sendResponse, { success: true, translations });
         return;
       }
 
@@ -208,12 +277,11 @@ async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse,
       }
 
       const final = cleanTexts.map(t => (cachedMap[t] !== undefined ? cachedMap[t] : translatedMap[t]));
-      sendResponse({ success: true, translations: final });
+      safeSendResponse(sendResponse, { success: true, translations: final });
     } catch (error) {
       console.error('Translation error:', error);
-      sendResponse({ success: false, error: error.message });
+      safeSendResponse(sendResponse, { success: false, error: error.message });
     }
-  })();
 }
 
 /**
@@ -229,7 +297,7 @@ async function translateText(text, targetLang, sourceLang = 'en', provider = 'my
   if (provider === 'bergamot') {
     try {
       const url = 'http://127.0.0.1:8888/translate';
-      const resp = await fetch(url, {
+      const resp = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ q: text, source: sourceLang, target: targetLang })
@@ -242,31 +310,27 @@ async function translateText(text, targetLang, sourceLang = 'en', provider = 'my
       const data = await resp.json();
       return data.translatedText || text;
     } catch (err) {
-      console.warn('Bergamot provider unavailable, falling back to LibreTranslate:', err.message || err);
-    }
-  }
-
-  if (provider === 'libretranslate') {
-    try {
-      const url = 'https://libretranslate.de/translate';
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q: text, source: sourceLang, target: targetLang, format: 'text' })
-      });
-
-      if (!resp.ok) throw new Error(`Translation API error: ${resp.status}`);
-      const data = await resp.json();
-      // LibreTranslate returns { translatedText }
-      return data.translatedText || text;
-    } catch (err) {
+      console.warn('Bergamot provider error:', err.message || err);
       throw err;
     }
   }
 
+  if (provider === 'libretranslate') {
+    const url = 'https://libretranslate.de/translate';
+    const resp = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: text, source: sourceLang, target: targetLang, format: 'text' })
+    });
+
+    if (!resp.ok) throw new Error(`Translation API error: ${resp.status}`);
+    const data = await resp.json();
+    return data.translatedText || text;
+  }
+
   if (provider === 'google') {
     const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     if (!response.ok) {
       throw new Error(`Google Translate API error: ${response.status}`);
     }
@@ -282,7 +346,7 @@ async function translateText(text, targetLang, sourceLang = 'en', provider = 'my
 
   // Fallback to MyMemory
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
-  const response = await fetch(url);
+  const response = await fetchWithTimeout(url);
 
   if (!response.ok) {
     throw new Error(`Translation API error: ${response.status}`);
@@ -315,28 +379,31 @@ async function translateWithFallback(text, targetLang, sourceLang = 'en', prefer
   });
   const cooldownMs = settings.providerCooldownMs || 300000;
 
-  for (const provider of providers) {
-    if (!isProviderAvailable(provider)) continue;
-    try {
-      const translated = await translateWithRetries(text, targetLang, sourceLang, provider);
-      if (translated && normalizeText(translated) !== normalizeText(text)) return translated;
-    } catch (err) {
-      const msg = String(err && err.message || err).toLowerCase();
-      if (msg.includes('429') || msg.includes('rate limit')) {
-        setProviderCooldown(provider, cooldownMs);
-        console.warn(`🚫 Provider '${provider}' rate-limited — pausing for ${Math.round(cooldownMs/1000)}s`);
+  async function runFallbackLoop() {
+    for (const provider of providers) {
+      if (!isProviderAvailable(provider)) continue;
+      try {
+        const translated = await translateWithRetries(text, targetLang, sourceLang, provider);
+        if (translated && normalizeText(translated) !== normalizeText(text)) return translated;
+      } catch (err) {
+        const msg = String(err && err.message || err).toLowerCase();
+        if (msg.includes('429') || msg.includes('rate limit')) {
+          setProviderCooldown(provider, cooldownMs);
+          console.warn(`🚫 Provider '${provider}' rate-limited — pausing for ${Math.round(cooldownMs/1000)}s`);
+        }
         continue;
       }
-      continue;
     }
+
+    throw new Error('All translation providers failed or are rate-limited');
   }
 
-  throw new Error('All translation providers failed or are rate-limited');
+  return await withTimeout(runFallbackLoop(), TRANSLATION_PER_TEXT_TIMEOUT_MS, `Translation timed out after ${TRANSLATION_PER_TEXT_TIMEOUT_MS}ms`);
 }
 
-async function translateWithRetries(text, targetLang, sourceLang = 'en', provider = 'mymemory', maxAttempts = 3) {
+async function translateWithRetries(text, targetLang, sourceLang = 'en', provider = 'mymemory', maxAttempts = 2) {
   let attempt = 0;
-  const baseDelay = 200;
+  const baseDelay = 150;
   while (attempt < maxAttempts) {
     attempt++;
     try {
@@ -359,6 +426,11 @@ async function translateWithRetries(text, targetLang, sourceLang = 'en', provide
  * @param {Function} callback - Callback with boolean result
  */
 function isContentScriptActive(tabId, callback) {
+  if (!runtimeAlive()) {
+    callback(false);
+    return;
+  }
+
   chrome.tabs.sendMessage(tabId, { action: 'ping' }, (response) => {
     // Silently handle error if content script isn't ready
     if (chrome.runtime.lastError) {

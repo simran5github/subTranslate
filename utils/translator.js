@@ -3,6 +3,14 @@
  * Provides pluggable translation providers with support for multiple services
  */
 
+function runtimeAlive() {
+  try {
+    return !!chrome.runtime?.id;
+  } catch {
+    return false;
+  }
+}
+
 class TranslationService {
   constructor(provider = 'libretranslate') {
     this.provider = provider;
@@ -72,6 +80,10 @@ class LibreTranslateProvider {
   }
 
   async translate(text, targetLang, sourceLang = 'en') {
+    if (!runtimeAlive()) {
+      throw new Error('Extension runtime unavailable');
+    }
+
     try {
       const response = await chrome.runtime.sendMessage({
         action: 'translateBatch',
@@ -124,13 +136,32 @@ class BergamotTranslateProvider {
   }
 
   async translate(text, targetLang, sourceLang = 'en') {
+    if (!runtimeAlive()) {
+      throw new Error('Extension runtime unavailable');
+    }
+
     try {
-      const response = await chrome.runtime.sendMessage({
-        action: 'translateBatch',
-        provider: this.key,
-        texts: [text],
-        targetLang,
-        sourceLang
+      const response = await new Promise((resolve, reject) => {
+        try {
+          chrome.runtime.sendMessage(
+            {
+              action: 'translateBatch',
+              provider: this.key,
+              texts: [text],
+              targetLang,
+              sourceLang
+            },
+            (response) => {
+              if (chrome.runtime.lastError) {
+                return reject(new Error(chrome.runtime.lastError.message));
+              }
+
+              resolve(response);
+            }
+          );
+        } catch (err) {
+          reject(err);
+        }
       });
 
       if (!response?.success || !Array.isArray(response.translations)) {
@@ -191,6 +222,10 @@ class MyMemoryProvider {
   }
 
   async translate(text, targetLang, sourceLang = 'en') {
+    if (!runtimeAlive()) {
+      throw new Error('Extension runtime unavailable');
+    }
+
     // Use runtime messaging with explicit callback to detect runtime.lastError
     const resp = await new Promise((resolve, reject) => {
       try {
