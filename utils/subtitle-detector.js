@@ -50,15 +50,20 @@ class SubtitleDetector {
 
     this.subtitleHints = ['subtitle', 'caption', 'timedtext', 'cue', 'cc', 'track', 'transcript'];
     this.playerHints = ['player', 'video', 'stream', 'media', 'embed', 'screen', 'content'];
-    this.excludedKeywords = ['nav', 'menu', 'button', 'logo', 'icon', 'score', 'time', 'share', 'settings', 'volume', 'seek', 'progress', 'playlist', 'banner', 'cookie', 'modal', 'tooltip', 'chat', 'comment', 'loading', 'season', 'episode', 'metadata', 'description', 'overview', 'trailer', 'cast', 'director', 'genre', 'rating', 'quality', 'server', 'private', 'home', 'movies', 'series', 'cinema', 'download', 'premium', 'standard', 'free', 'source', 'sources', 'stream', 'streaming', 'playing', 'production', 'networks', 'companies', 'countries', 'languages', 'disclaimer', 'hosting'];
-    this.metadataKeywords = ['season', 'episode', 'series', 'movie', 'film', 'cast', 'director', 'genre', 'rating', 'trailer', 'overview', 'description', 'loading', 'server', 'private', 'home', 'cinema', 'chapter', 'quality', 'current source', 'download', 'torrent', 'premium', 'standard', 'free', 'source', 'sources', 'stream ready', 'now playing', 'playing', 'production', 'networks', 'companies', 'countries', 'languages', 'first aired', 'important disclaimer', 'third-party content', 'no file hosting', 'powered by', 'built with', 'you may also like'];    this.invalidSubtitlePatterns = [
+    this.excludedKeywords = ['nav', 'menu', 'button', 'logo', 'icon', 'score', 'time', 'share', 'settings', 'volume', 'seek', 'progress', 'playlist', 'banner', 'cookie', 'modal', 'tooltip', 'chat', 'comment', 'loading', 'season', 'episode', 'metadata', 'description', 'overview', 'trailer', 'cast', 'director', 'genre', 'rating', 'quality', 'server', 'private', 'home', 'movies', 'series', 'cinema', 'download', 'premium', 'standard', 'free', 'source', 'sources', 'stream', 'streaming', 'playing', 'production', 'networks', 'companies', 'countries', 'languages', 'disclaimer', 'hosting', 'info', 'shopping'];
+    this.metadataKeywords = ['season', 'episode', 'series', 'movie', 'film', 'cast', 'director', 'genre', 'rating', 'trailer', 'overview', 'description', 'loading', 'server', 'private', 'home', 'cinema', 'chapter', 'quality', 'current source', 'download', 'torrent', 'premium', 'standard', 'free', 'source', 'sources', 'stream ready', 'now playing', 'playing', 'production', 'networks', 'companies', 'countries', 'languages', 'first aired', 'important disclaimer', 'third-party content', 'no file hosting', 'powered by', 'built with', 'you may also like'];
+    this.invalidSubtitlePatterns = [
       /^\d+(?:\.\d+)?x$/i,
       /^\d+(?:\.\d+)?%$/i,
       /^\d+(?:kp?|mb|gb)$/i,
       /^\d{3,4}p$/i,
       /^(?:hd|sd|cc|auto|off|on|default|subtitles?|captions?|settings|quality|controls?)$/i,
-      /^(?:play|pause|stop|mute|unmute|rewind|forward|skip|next|previous|back|fullscreen|exit fullscreen|pip|theater mode|theatre mode)$/i
-    ];    this.shortStopWords = new Set(['the', 'and', 'you', 'are', 'for', 'this', 'that', 'have', 'with', 'will', 'from', 'your', 'into', 'about', 'just', 'like', 'when', 'what', 'where', 'there', 'here']);
+      /^(?:play|pause|stop|mute|unmute|rewind|forward|skip|next|previous|back|fullscreen|exit fullscreen|pip|theater mode|theatre mode)$/i,
+      /\b(?:copy\s*link|info|shopping|share|download|save|learn\s*more|open\s*in|report|watch|subscribe|volume|settings|closed captions?)\b/i,
+      /^(?:info|shopping|copy|link|share|download|save|watch|subscribe|volume)(?:[A-Z][a-z]+)+/i,
+      /(?:info|shopping|copy|link|share|download|save|open|watch|subscribe|addto|buy|cart)(?:[A-Z][a-z]+)?/i
+    ];
+    this.shortStopWords = new Set(['the', 'and', 'you', 'are', 'for', 'this', 'that', 'have', 'with', 'will', 'from', 'your', 'into', 'about', 'just', 'like', 'when', 'what', 'where', 'there', 'here']);
   }
 
   /**
@@ -152,7 +157,8 @@ class SubtitleDetector {
       }
     });
 
-    if (document.body) {
+    // Only add document.body as a fallback when no player-like roots were found.
+    if (roots.length === 0 && document.body) {
       addRoot(document.body);
     }
 
@@ -238,6 +244,26 @@ class SubtitleDetector {
     const hasCaptionCaseStructure = this.hasCaptionCaseStructure(text, textWords);
     const hasStrongTextStructure = this.hasStrongTextStructure(text, textWords);
     const isLikelySubtitle = hasSubtitleHint || hasAncestorHint || (isInsidePlayer && isTextLikeElement && isSmallText && hasStrongTextStructure);
+    // If there are video elements on the page, prefer elements that overlap or are positioned near a video area.
+    const videos = Array.from(document.querySelectorAll('video'));
+    if (videos.length > 0) {
+      const elRect = el.getBoundingClientRect();
+      const intersectsAny = videos.some(v => {
+        try {
+          const vr = v.getBoundingClientRect();
+          // expand video rect slightly to account for subtitle overlays
+          const paddingY = Math.max(20, vr.height * 0.2);
+          const expanded = { top: vr.top - paddingY, bottom: vr.bottom + paddingY, left: vr.left - 10, right: vr.right + 10 };
+          return !(elRect.bottom < expanded.top || elRect.top > expanded.bottom || elRect.right < expanded.left || elRect.left > expanded.right);
+        } catch (e) {
+          return false;
+        }
+      });
+
+      if (!intersectsAny && !hasSubtitleHint && !hasAncestorHint) {
+        return false;
+      }
+    }
 
     return isLikelySubtitle && (hasCaptionCaseStructure || hasStrongTextStructure || hasSubtitleHint || hasAncestorHint);
   }
@@ -261,6 +287,19 @@ class SubtitleDetector {
     }
 
     if (/^(?:play|pause|stop|mute|unmute|rewind|forward|seek|skip|next|previous|back|fullscreen|exit fullscreen|close)\b/i.test(normalized)) {
+      return true;
+    }
+
+    const uiKeywordCount = (normalized.match(/\b(?:info|shopping|copy|link|share|download|save|watch|subscribe|volume)\b/g) || []).length;
+    if (uiKeywordCount >= 2) {
+      return true;
+    }
+
+    if (textWords.length <= 4 && /(?:[A-Z][a-z]+){2,}/.test(text)) {
+      return true;
+    }
+
+    if (/\b(?:info shopping|copy link|share video|info shopping|copylink|sharelink|watch now|add to cart)\b/i.test(normalized)) {
       return true;
     }
 
@@ -421,6 +460,12 @@ class SubtitleDetector {
    * @param {string} translatedText - Translated text
    */
   markAsTranslated(el, translatedText) {
+    const originalText = el.textContent || '';
+    if (!el.dataset.originalText) {
+      el.dataset.originalText = originalText;
+    }
+
+    el.textContent = translatedText;
     el.dataset.translated = 'true';
     el.dataset.translatedText = translatedText;
     el.dataset.lastModified = Date.now().toString();
@@ -432,7 +477,28 @@ class SubtitleDetector {
    * @returns {boolean} True if already translated
    */
   isAlreadyTranslated(el) {
-    return el.dataset.translated === 'true';
+    if (el.dataset.translated !== 'true') {
+      return false;
+    }
+
+    const currentText = el.textContent || '';
+    const translatedText = el.dataset.translatedText || '';
+    const originalText = el.dataset.originalText || '';
+
+    if (currentText === translatedText) {
+      return true;
+    }
+
+    if (currentText !== originalText) {
+      // The subtitle text changed after translation, reset markers so it can be reprocessed.
+      delete el.dataset.translated;
+      delete el.dataset.translatedText;
+      delete el.dataset.originalText;
+      delete el.dataset.lastModified;
+      return false;
+    }
+
+    return false;
   }
 
   /**

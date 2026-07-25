@@ -3,11 +3,8 @@
  * Handles translation requests and manages extension state
  */
 
-importScripts('utils/subtitle-file-handler.js');
-
 // Track which tabs have content scripts active
 const activeTabsMap = new Map();
-const subtitleFileHandler = new SubtitleFileHandler(null);
 
 /**
  * Initialize the background service worker
@@ -26,33 +23,10 @@ function initializeBackground() {
     activeTabsMap.delete(tabId);
   });
 
-  chrome.webRequest.onBeforeRequest.addListener(
-    async (details) => {
-      const detection = detectSubtitleResource(details.url);
-      if (!detection.isSubtitle) {
-        return {};
-      }
-
-      try {
-        const handler = new SubtitleFileHandler({
-          translate: async (text, targetLang, sourceLang = 'en') => {
-            return translateText(text, targetLang, sourceLang);
-          }
-        });
-
-        const result = await handler.handleSubtitleRequest(details);
-        if (result?.body) {
-          return { redirectUrl: 'data:text/plain;charset=utf-8,' + encodeURIComponent(result.body) };
-        }
-      } catch (error) {
-        console.debug('Subtitle interception failed:', error);
-      }
-
-      return {};
-    },
-    { urls: ['<all_urls>'] },
-    ['blocking']
-  );
+  // Note: webRequest blocking is not supported in Manifest V3 for regular extensions.
+  // Subtitle file interception via blocking webRequest was removed to maintain MV3 compatibility.
+  // If subtitle interception is required, consider using declarativeNetRequest or
+  // performing fetch/translation from the content script instead.
 }
 
 /**

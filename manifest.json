@@ -7,8 +7,6 @@
     "storage",
     "activeTab",
     "scripting",
-    "webRequest",
-    "webRequestBlocking",
     "tabs"
   ],
   "host_permissions": [
