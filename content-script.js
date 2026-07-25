@@ -324,10 +324,9 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
           return translation;
         }
 
-        const currentProvider = translationService.provider;
-        const alternatives = translationService.getAvailableProviders().filter(p => p !== currentProvider && (providerCooldowns[p] || 0) <= Date.now());
+        const alternatives = translationService.getAvailableProviders().filter(p => p !== translationService.provider && (providerCooldowns[p] || 0) <= Date.now());
         if (alternatives.length > 0) {
-          console.info(`🔁 Switching provider from '${currentProvider}' to '${alternatives[0]}' after identical or empty translation result`);
+          console.info(`🔁 Switching provider from '${translationService.provider}' to '${alternatives[0]}' after identical or empty translation result`);
           try {
             translationService.switchProvider(alternatives[0]);
           } catch (swErr) {
