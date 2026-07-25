@@ -67,12 +67,14 @@ class LibreTranslateProvider {
     // MyMemory is free, CORS-friendly, and doesn't require authentication
     this.apiUrl = 'https://api.mymemory.translated.net/get';
     this.name = 'LibreTranslate';
+    this.key = 'libretranslate';
   }
 
   async translate(text, targetLang, sourceLang = 'en') {
     try {
       const response = await chrome.runtime.sendMessage({
         action: 'translateBatch',
+        provider: this.key,
         texts: [text],
         targetLang,
         sourceLang
@@ -117,6 +119,7 @@ class LibreTranslateProvider {
 class GoogleTranslateProvider {
   constructor() {
     this.name = 'Google Translate';
+    this.key = 'google';
   }
 
   async translate(text, targetLang, sourceLang = 'en') {
@@ -156,6 +159,7 @@ class MyMemoryProvider {
   constructor() {
     this.apiUrl = 'https://api.mymemory.translated.net';
     this.name = 'MyMemory';
+    this.key = 'mymemory';
   }
 
   async translate(text, targetLang, sourceLang = 'en') {
@@ -165,6 +169,7 @@ class MyMemoryProvider {
         chrome.runtime.sendMessage(
           {
             action: 'translateBatch',
+            provider: this.key,
             texts: [text],
             targetLang,
             sourceLang

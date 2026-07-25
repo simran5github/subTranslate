@@ -10,6 +10,9 @@ class StorageManager {
       sourceLang: 'en',
       targetLang: 'fr',
       provider: 'libretranslate',
+      providerCooldownMs: 300000, // default 5 minutes
+      providerChunkSize: 4, // number of concurrent requests per batch
+      providerChunkDelay: 200, // ms delay between batches
       cacheDuration: 86400000, // 24 hours in milliseconds
       autoDetect: false,
       flickerReduction: true

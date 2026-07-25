@@ -63,28 +63,58 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
  * @param {Function} sendResponse - Callback to send response
  */
 async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse) {
-  try {
-    const translations = await Promise.all(
-      texts.map(text => translateText(text, targetLang, sourceLang))
-    );
+  // Support simple batching/chunking to avoid bursts that trigger rate limits.
+  (async () => {
+    try {
+      const chunkSize = (texts && texts._chunkSize) || 4;
+      const chunkDelay = (texts && texts._chunkDelay) || 200;
+      const provider = (texts && texts._provider) || 'mymemory';
 
-    sendResponse({
-      success: true,
-      translations: translations
-    });
-  } catch (error) {
-    console.error('Translation error:', error);
-    sendResponse({
-      success: false,
-      error: error.message
-    });
-  }
+      const cleanTexts = Array.isArray(texts) ? texts : [texts];
+      const results = [];
+
+      for (let i = 0; i < cleanTexts.length; i += chunkSize) {
+        const chunk = cleanTexts.slice(i, i + chunkSize);
+        const chunkResults = await Promise.all(chunk.map(t => translateText(t, targetLang, sourceLang, provider)));
+        results.push(...chunkResults);
+        if (i + chunkSize < cleanTexts.length) {
+          await new Promise(r => setTimeout(r, chunkDelay));
+        }
+      }
+
+      sendResponse({ success: true, translations: results });
+    } catch (error) {
+      console.error('Translation error:', error);
+      sendResponse({ success: false, error: error.message });
+    }
+  })();
 }
 
 /**
  * Translate one text from the service worker, where host permissions apply.
  */
-async function translateText(text, targetLang, sourceLang = 'en') {
+async function translateText(text, targetLang, sourceLang = 'en', provider = 'mymemory') {
+  if (!text) return text;
+
+  if (provider === 'libretranslate') {
+    try {
+      const url = 'https://libretranslate.de/translate';
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: text, source: sourceLang, target: targetLang, format: 'text' })
+      });
+
+      if (!resp.ok) throw new Error(`Translation API error: ${resp.status}`);
+      const data = await resp.json();
+      // LibreTranslate returns { translatedText }
+      return data.translatedText || text;
+    } catch (err) {
+      throw err;
+    }
+  }
+
+  // Fallback to MyMemory
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
   const response = await fetch(url);
 
