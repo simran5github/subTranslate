@@ -10,10 +10,63 @@ const activeTabsMap = new Map();
 const translationCache = new Map();
 // Provider cooldowns: provider -> timestamp(ms) until which provider is paused
 const providerCooldowns = {};
-const AVAILABLE_PROVIDERS = ['libretranslate', 'mymemory', 'google'];
+const AVAILABLE_PROVIDERS = ['bergamot', 'libretranslate', 'mymemory', 'google'];
+const BACKGROUND_CACHE_DATA_KEY = 'backgroundTranslationCache';
+const BACKGROUND_CACHE_TXT_KEY = 'backgroundTranslationCacheTxt';
 
 function cacheKey(text, source, target) {
   return `${source}|${target}|${text}`;
+}
+
+function generateBackgroundCacheTxt(cacheObj) {
+  return Object.entries(cacheObj).map(([key, entry]) => {
+    const safeKey = encodeURIComponent(key);
+    const safeValue = encodeURIComponent(String(entry?.value ?? ''));
+    return `${safeKey}\t${safeValue}`;
+  }).join('\n');
+}
+
+async function loadBackgroundCache() {
+  return new Promise((resolve) => {
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+      return resolve();
+    }
+
+    chrome.storage.local.get([BACKGROUND_CACHE_DATA_KEY], (res) => {
+      if (chrome.runtime.lastError) {
+        console.warn('Failed to load background cache:', chrome.runtime.lastError);
+        return resolve();
+      }
+
+      const stored = res[BACKGROUND_CACHE_DATA_KEY] || {};
+      const now = Date.now();
+      Object.entries(stored).forEach(([key, entry]) => {
+        if (!entry || (entry.expires && now > entry.expires)) return;
+        translationCache.set(key, entry);
+      });
+      resolve();
+    });
+  });
+}
+
+function persistBackgroundCache() {
+  if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+    return;
+  }
+
+  const payload = {};
+  translationCache.forEach((entry, key) => {
+    payload[key] = entry;
+  });
+
+  chrome.storage.local.set({
+    [BACKGROUND_CACHE_DATA_KEY]: payload,
+    [BACKGROUND_CACHE_TXT_KEY]: generateBackgroundCacheTxt(payload)
+  }, () => {
+    if (chrome.runtime.lastError) {
+      console.warn('Failed to persist background cache:', chrome.runtime.lastError);
+    }
+  });
 }
 
 function getCached(text, source, target) {
@@ -30,6 +83,7 @@ function getCached(text, source, target) {
 function setCached(text, source, target, value, ttlMs = 24 * 60 * 60 * 1000) {
   const key = cacheKey(text, source, target);
   translationCache.set(key, { value, expires: Date.now() + ttlMs });
+  persistBackgroundCache();
 }
 
 function isProviderAvailable(provider) {
@@ -46,6 +100,12 @@ function setProviderCooldown(provider, msFromNow) {
  */
 function initializeBackground() {
   console.log('SubTranslate background script initialized');
+
+  loadBackgroundCache().then(() => {
+    console.log('SubTranslate background cache loaded');
+  }).catch((err) => {
+    console.warn('SubTranslate background cache load failed:', err);
+  });
 
   // Set up tab tracking
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -113,20 +173,25 @@ async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse,
         if (cached != null) cachedMap[t] = cached; else missing.push(t);
       }
 
-      if (missing.length === 0) {
+      const uniqueMissing = [...new Set(missing)];
+      if (uniqueMissing.length === 0) {
         const translations = cleanTexts.map(t => cachedMap[t]);
         sendResponse({ success: true, translations });
         return;
       }
 
-      const results = [];
-      for (let i = 0; i < missing.length; i += chunkSize) {
-        const chunk = missing.slice(i, i + chunkSize);
+      const translatedMap = {};
+      for (let i = 0; i < uniqueMissing.length; i += chunkSize) {
+        const chunk = uniqueMissing.slice(i, i + chunkSize);
         const chunkResults = await Promise.all(chunk.map(async (t) => {
           try {
             const translated = await translateWithFallback(t, targetLang, sourceLang || 'en', requestedProvider);
-            if (translated && translated !== t) {
-              setCached(t, sourceLang || 'en', targetLang, translated, defaults.ttlMs);
+            if (translated != null) {
+              if (normalizeText(translated) !== normalizeText(t)) {
+                setCached(t, sourceLang || 'en', targetLang, translated, defaults.ttlMs);
+              } else {
+                setCached(t, sourceLang || 'en', targetLang, t, defaults.ttlMs);
+              }
             }
             return translated;
           } catch (err) {
@@ -135,11 +200,14 @@ async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse,
           }
         }));
 
-        results.push(...chunkResults);
-        if (i + chunkSize < missing.length) await new Promise(r => setTimeout(r, chunkDelay));
+        chunk.forEach((t, index) => {
+          translatedMap[t] = chunkResults[index];
+        });
+
+        if (i + chunkSize < uniqueMissing.length) await new Promise(r => setTimeout(r, chunkDelay));
       }
 
-      const final = cleanTexts.map(t => (cachedMap[t] !== undefined ? cachedMap[t] : results.shift()));
+      const final = cleanTexts.map(t => (cachedMap[t] !== undefined ? cachedMap[t] : translatedMap[t]));
       sendResponse({ success: true, translations: final });
     } catch (error) {
       console.error('Translation error:', error);
@@ -151,8 +219,32 @@ async function handleTranslateBatch(texts, targetLang, sourceLang, sendResponse,
 /**
  * Translate one text from the service worker, where host permissions apply.
  */
+function normalizeText(text) {
+  return (text || '').trim().replace(/\s+/g, ' ');
+}
+
 async function translateText(text, targetLang, sourceLang = 'en', provider = 'mymemory') {
   if (!text) return text;
+
+  if (provider === 'bergamot') {
+    try {
+      const url = 'http://127.0.0.1:8888/translate';
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: text, source: sourceLang, target: targetLang })
+      });
+
+      if (!resp.ok) {
+        throw new Error(`Bergamot Translate API error: ${resp.status}`);
+      }
+
+      const data = await resp.json();
+      return data.translatedText || text;
+    } catch (err) {
+      console.warn('Bergamot provider unavailable, falling back to LibreTranslate:', err.message || err);
+    }
+  }
 
   if (provider === 'libretranslate') {
     try {
@@ -227,7 +319,7 @@ async function translateWithFallback(text, targetLang, sourceLang = 'en', prefer
     if (!isProviderAvailable(provider)) continue;
     try {
       const translated = await translateWithRetries(text, targetLang, sourceLang, provider);
-      if (translated && translated !== text) return translated;
+      if (translated && normalizeText(translated) !== normalizeText(text)) return translated;
     } catch (err) {
       const msg = String(err && err.message || err).toLowerCase();
       if (msg.includes('429') || msg.includes('rate limit')) {

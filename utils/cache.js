@@ -9,6 +9,7 @@ class TranslationCache {
     this.maxSize = maxSize;
     this.hits = 0;
     this.misses = 0;
+    this.loadFromStorage();
   }
 
   /**
@@ -65,6 +66,13 @@ class TranslationCache {
     this.cache.clear();
     this.hits = 0;
     this.misses = 0;
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.remove('translationCache', () => {
+        if (chrome.runtime.lastError) {
+          console.warn('Failed to clear persisted translation cache:', chrome.runtime.lastError);
+        }
+      });
+    }
   }
 
   /**
@@ -122,10 +130,57 @@ class TranslationCache {
    * @param {string} targetLang - Target language
    * @param {string} sourceLang - Source language
    */
+  async persistToStorage() {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        const payload = {};
+        for (const [key, value] of this.cache.entries()) {
+          payload[key] = value;
+        }
+        await new Promise((resolve, reject) => {
+          chrome.storage.local.set({ translationCache: payload }, () => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+            } else {
+              resolve();
+            }
+          });
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to persist translation cache:', err);
+    }
+  }
+
+  async loadFromStorage() {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        const result = await new Promise((resolve, reject) => {
+          chrome.storage.local.get(['translationCache'], (res) => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+            } else {
+              resolve(res.translationCache || {});
+            }
+          });
+        });
+
+        Object.entries(result).forEach(([key, value]) => {
+          if (!this.cache.has(key)) {
+            this.cache.set(key, value);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to load translation cache:', err);
+    }
+  }
+
   batchSet(translations, targetLang, sourceLang = 'en') {
     Object.entries(translations).forEach(([text, translation]) => {
       this.set(text, translation, targetLang, sourceLang);
     });
+    this.persistToStorage();
   }
 }
 

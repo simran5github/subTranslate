@@ -187,8 +187,7 @@ async function processVisibleSubtitles() {
 
     hasLoggedNoSubtitles = false;
     
-    const textsToTranslate = [];
-    const elementMap = new Map();
+    const textsToTranslateMap = new Map();
 
     // Collect unique new texts to translate without modifying the visible subtitle
     for (const el of subtitleElements) {
@@ -201,11 +200,15 @@ async function processVisibleSubtitles() {
         !lastProcessedTexts.has(text) &&
         !subtitleDetector.isAlreadyTranslated(el)
       ) {
-        textsToTranslate.push({ text, element: el });
-        elementMap.set(text, el);
-        console.debug(`✨ New subtitle found: "${text}"`);
+        if (!textsToTranslateMap.has(text)) {
+          textsToTranslateMap.set(text, []);
+          console.debug(`✨ New subtitle found: "${text}"`);
+        }
+        textsToTranslateMap.get(text).push(el);
       }
     }
+
+    const textsToTranslate = Array.from(textsToTranslateMap.entries()).map(([text, elements]) => ({ text, elements }));
 
     // Translate new texts
     if (textsToTranslate.length > 0) {
@@ -228,6 +231,7 @@ async function processVisibleSubtitles() {
 async function translateBatch(textsToTranslate) {
   const { sourceLang, targetLang } = currentSettings;
   const texts = textsToTranslate.map(item => item.text);
+  const textToElements = new Map(textsToTranslate.map(item => [item.text, item.elements]));
 
   console.debug(`🔤 Languages: ${sourceLang} → ${targetLang}`);
 
@@ -240,13 +244,13 @@ async function translateBatch(textsToTranslate) {
 
   // Apply cached translations to the tracking metadata only, without changing visible captions
   Object.entries(cached).forEach(([text, translation]) => {
-    const element = textsToTranslate.find(item => item.text === text)?.element;
-    if (element) {
+    const elements = textToElements.get(text) || [];
+    elements.forEach(element => {
       subtitleDetector.markAsTranslated(element, translation);
-      // Mark cached texts as processed so we don't re-request them
-      lastProcessedTexts.add(text);
-      console.debug(`📦 Cached translation for "${text}": "${translation}"`);
-    }
+    });
+    // Mark cached texts as processed so we don't re-request them
+    lastProcessedTexts.add(text);
+    console.debug(`📦 Cached translation for "${text}": "${translation}"`);
   });
 
   // Translate missing texts
@@ -259,27 +263,34 @@ async function translateBatch(textsToTranslate) {
       const translationMap = {};
       missing.forEach((text, index) => {
         const translation = translations[index];
-        const element = textsToTranslate.find(item => item.text === text)?.element;
+        const elements = textToElements.get(text) || [];
 
         // Only cache and mark as translated when we received a valid translation
         if (translation && translation !== text) {
           translationMap[text] = translation;
-          if (element) {
+          elements.forEach(element => {
             subtitleDetector.markAsTranslated(element, translation);
-            lastProcessedTexts.add(text);
-            console.info(`🌍 Translated: "${text}" → "${translation}"`);
-          }
+          });
+          lastProcessedTexts.add(text);
+          console.info(`🌍 Translated: "${text}" → "${translation}"`);
         } else {
           console.warn(`⚠️ Translation failed or identical for "${text}"; will retry later`);
         }
       });
 
       translationCache.batchSet(translationMap, targetLang, sourceLang);
-      console.debug(`💾 Cached ${missing.length} translation(s)`);
+      console.debug(`💾 Cached ${Object.keys(translationMap).length} translation(s)`);
     } catch (error) {
       console.error('❌ Error translating batch:', error);
     }
   }
+}
+
+/**
+ * Normalize whitespace so comparisons ignore trivial spacing differences.
+ */
+function normalizeText(text) {
+  return (text || '').trim().replace(/\s+/g, ' ');
 }
 
 /**
@@ -319,7 +330,9 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
 
         console.debug(`  🔄 Translating (attempt ${attempt}/${maxAttempts}) with provider '${translationService.provider}': "${text.substring(0, 50)}..."`);
         const translation = await translationService.translate(text, targetLang, sourceLang);
-        if (translation && translation !== text) {
+        const normalizedSource = normalizeText(text);
+        const normalizedTranslation = normalizeText(translation);
+        if (normalizedTranslation && normalizedTranslation !== normalizedSource) {
           console.debug(`  ✓ Result: "${translation.substring(0, 50)}..."`);
           return translation;
         }

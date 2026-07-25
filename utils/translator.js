@@ -7,6 +7,7 @@ class TranslationService {
   constructor(provider = 'libretranslate') {
     this.provider = provider;
     this.providers = {
+      bergamot: new BergamotTranslateProvider(),
       libretranslate: new LibreTranslateProvider(),
       google: new GoogleTranslateProvider(),
       mymemory: new MyMemoryProvider()
@@ -113,6 +114,38 @@ class LibreTranslateProvider {
 }
 
 /**
+ * Bergamot Translator Provider
+ * Designed for neural machine translation and offline usage.
+ */
+class BergamotTranslateProvider {
+  constructor() {
+    this.name = 'Bergamot Translator';
+    this.key = 'bergamot';
+  }
+
+  async translate(text, targetLang, sourceLang = 'en') {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        action: 'translateBatch',
+        provider: this.key,
+        texts: [text],
+        targetLang,
+        sourceLang
+      });
+
+      if (!response?.success || !Array.isArray(response.translations)) {
+        throw new Error(response?.error || 'Bergamot translation service unavailable');
+      }
+
+      return response.translations[0] || text;
+    } catch (error) {
+      console.error('Bergamot Translate error:', error);
+      throw error;
+    }
+  }
+}
+
+/**
  * Google Translate Provider
  * Uses unofficial Google Translate API
  */
@@ -191,5 +224,5 @@ class MyMemoryProvider {
 
 // Export for use in other modules
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { TranslationService, LibreTranslateProvider, GoogleTranslateProvider, MyMemoryProvider };
+  module.exports = { TranslationService, BergamotTranslateProvider, LibreTranslateProvider, GoogleTranslateProvider, MyMemoryProvider };
 }

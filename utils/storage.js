@@ -7,9 +7,9 @@ class StorageManager {
   constructor() {
     this.defaults = {
       enabled: false,
-      sourceLang: 'en',
-      targetLang: 'fr',
-      provider: 'libretranslate',
+      sourceLang: 'fr',
+      targetLang: 'en',
+      provider: 'bergamot',
       providerCooldownMs: 300000, // default 5 minutes
       providerChunkSize: 4, // number of concurrent requests per batch
       providerChunkDelay: 200, // ms delay between batches
