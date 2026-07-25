@@ -42,19 +42,23 @@ async function initializeExtension() {
     
     console.debug('✅ All utility classes loaded');
     
-    // Initialize translation service
-    translationService = new TranslationService('libretranslate');
-    translationCache = new TranslationCache(500);
+    // Load settings before initializing translation provider
     storageManager = new StorageManager();
+    currentSettings = await storageManager.getAll();
+    extensionEnabled = currentSettings.enabled;
+    translationService = new TranslationService(currentSettings.provider || 'libretranslate');
+    translationCache = new TranslationCache(500);
     subtitleDetector = new SubtitleDetector();
 
     console.debug('✅ Service instances created');
 
-    // Load settings
-    currentSettings = await storageManager.getAll();
-    extensionEnabled = currentSettings.enabled;
-    
-    console.debug('✅ Settings loaded:', { enabled: extensionEnabled, targetLang: currentSettings.targetLang });
+    // Log settings after initialization
+    console.debug('✅ Settings loaded:', {
+      enabled: extensionEnabled,
+      sourceLang: currentSettings.sourceLang,
+      targetLang: currentSettings.targetLang,
+      provider: currentSettings.provider
+    });
 
     // Set up storage change listener
     storageManager.onChanged((changes) => {
@@ -102,9 +106,6 @@ function startSubtitleTranslation() {
 
   // Set up MutationObserver to watch for subtitle changes
   mutationObserver = new MutationObserver((mutations) => {
-    if (mutations.length > 0) {
-      handleMutations();
-    }
     // Debounce mutations to avoid excessive processing
     handleMutations(mutations);
   });
@@ -116,8 +117,9 @@ function startSubtitleTranslation() {
     characterDataOldValue: false
   };
 
-  // Start observing the entire document
-  mutationObserver.observe(document.documentElement, observerConfig);
+  // Start observing the document (prefer body when available to reduce noise)
+  const targetNode = document.body || document.documentElement;
+  mutationObserver.observe(targetNode, observerConfig);
 
   console.debug('👁️  MutationObserver attached to document');
 
@@ -288,7 +290,7 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
   const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
   // Helper: translate with exponential backoff
-  async function translateWithRetry(text, targetLang, sourceLang = 'en', maxAttempts = 3, baseDelay = 250) {
+  async function translateWithRetry(text, targetLang, sourceLang = 'en', maxAttempts = 5, baseDelay = 250) {
     let attempt = 0;
     while (attempt < maxAttempts) {
       attempt++;
@@ -304,8 +306,12 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
             console.info(`🔁 Switching provider from '${currentProvider}' to '${alternatives[0]}'`);
             translationService.switchProvider(alternatives[0]);
           } else {
-            // No alternatives, abort early
-            throw new Error('No available translation providers (all on cooldown)');
+            // No alternatives: wait until the earliest cooldown expires instead of failing immediately
+            const cooldownValues = Object.values(providerCooldowns).filter(v => v > Date.now());
+            const waitUntil = cooldownValues.length > 0 ? Math.min(...cooldownValues) : Date.now() + (baseDelay * 2);
+            const waitMs = Math.max(50, waitUntil - Date.now());
+            console.info(`⏳ All providers on cooldown, waiting ${waitMs}ms before retrying`);
+            await new Promise(r => setTimeout(r, waitMs));
           }
         }
 
@@ -318,12 +324,12 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
         // Treat identical translation as failure to trigger retry
         throw new Error('Translation identical to source or empty');
       } catch (error) {
-        console.warn(`  ✗ Attempt ${attempt} failed for "${text}": ${error.message}`);
+        const errMsgRaw = String(error.message || error || '').toLowerCase();
+        console.warn(`  ✗ Attempt ${attempt} failed for "${text}": ${String(error.message || error)}`);
         // If rate limited (429), put current provider on cooldown and try fallback
-        const errMsg = String(error.message || '').toLowerCase();
-        if (errMsg.includes('429') || errMsg.includes('rate limit') || errMsg.includes('too many requests')) {
+        if (errMsgRaw.includes('429') || errMsgRaw.includes('rate limit') || errMsgRaw.includes('too many requests')) {
           const providerName = translationService.provider;
-          const cooldownMs = 5 * 60 * 1000; // 5 minutes
+          const cooldownMs = (currentSettings?.providerCooldownMs) || (60 * 1000); // default 60s
           providerCooldowns[providerName] = Date.now() + cooldownMs;
           console.warn(`🚫 Provider '${providerName}' rate-limited — pausing for ${Math.round(cooldownMs/1000)}s`);
           // Attempt to switch to another provider immediately if available
@@ -336,6 +342,10 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
               console.error('Provider switch failed:', swErr);
             }
           }
+        }
+        // Treat network/fetch issues as transient and allow retries with backoff
+        if (errMsgRaw.includes('failed to fetch') || errMsgRaw.includes('network') || errMsgRaw.includes('typeerror')) {
+          console.info('Network/fetch error detected; will retry with backoff');
         }
         if (attempt >= maxAttempts) {
           console.error(`  ✖ All ${maxAttempts} attempts failed for "${text}"`);
@@ -386,6 +396,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     translationCache?.clear();
     lastProcessedTexts.clear();
     sendResponse({ success: true });
+  } else if (request.action === 'updateProvider') {
+    if (request.provider && translationService) {
+      try {
+        translationService.switchProvider(request.provider);
+        currentSettings.provider = request.provider;
+        console.debug('⚙️ Provider updated from popup:', request.provider);
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error('❌ Failed to update provider:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    } else {
+      sendResponse({ success: false, error: 'Provider update failed' });
+    }
   }
 });
 

@@ -159,18 +159,33 @@ class MyMemoryProvider {
   }
 
   async translate(text, targetLang, sourceLang = 'en') {
-    const response = await chrome.runtime.sendMessage({
-      action: 'translateBatch',
-      texts: [text],
-      targetLang,
-      sourceLang
+    // Use runtime messaging with explicit callback to detect runtime.lastError
+    const resp = await new Promise((resolve, reject) => {
+      try {
+        chrome.runtime.sendMessage(
+          {
+            action: 'translateBatch',
+            texts: [text],
+            targetLang,
+            sourceLang
+          },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              return reject(new Error(chrome.runtime.lastError.message));
+            }
+            resolve(response);
+          }
+        );
+      } catch (err) {
+        reject(err);
+      }
     });
 
-    if (!response?.success || !Array.isArray(response.translations)) {
-      throw new Error(response?.error || 'MyMemory service unavailable');
+    if (!resp || !resp.success || !Array.isArray(resp.translations)) {
+      throw new Error(resp?.error || 'MyMemory service unavailable');
     }
 
-    return response.translations[0] || text;
+    return resp.translations[0] || text;
   }
 }
 
