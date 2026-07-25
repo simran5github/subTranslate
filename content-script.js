@@ -192,8 +192,10 @@ async function processVisibleSubtitles() {
 
     // Collect unique new texts to translate without modifying the visible subtitle
     for (const el of subtitleElements) {
+      // Double-check element still looks like a subtitle to reduce false positives
+      if (!subtitleDetector.isValidSubtitleElement(el)) continue;
       const text = subtitleDetector.extractText(el);
-      
+
       if (
         text &&
         !lastProcessedTexts.has(text) &&

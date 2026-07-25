@@ -96,10 +96,16 @@ async function handleToggleChange(event) {
   // Notify content script
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    chrome.tabs.sendMessage(tab.id, {
-      action: 'toggleTranslation',
-      enabled: enabled
-    });
+    if (tab?.id != null) {
+      chrome.tabs.sendMessage(tab.id, {
+        action: 'toggleTranslation',
+        enabled: enabled
+      }, (resp) => {
+        if (chrome.runtime.lastError) {
+          console.debug('No content script in tab (toggle):', chrome.runtime.lastError.message);
+        }
+      });
+    }
   } catch (error) {
     console.error('Error sending message to content script:', error);
   }
@@ -139,10 +145,16 @@ async function handleProviderChange(event) {
   // Notify content script
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    chrome.tabs.sendMessage(tab.id, {
-      action: 'updateProvider',
-      provider: provider
-    });
+    if (tab?.id != null) {
+      chrome.tabs.sendMessage(tab.id, {
+        action: 'updateProvider',
+        provider: provider
+      }, (resp) => {
+        if (chrome.runtime.lastError) {
+          console.debug('No content script in tab (provider):', chrome.runtime.lastError.message);
+        }
+      });
+    }
   } catch (error) {
     console.error('Error sending message to content script:', error);
   }
@@ -178,7 +190,13 @@ async function handleAutoDetectChange(event) {
 async function handleClearCache() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    chrome.tabs.sendMessage(tab.id, { action: 'clearCache' });
+    if (tab?.id != null) {
+      chrome.tabs.sendMessage(tab.id, { action: 'clearCache' }, (resp) => {
+        if (chrome.runtime.lastError) {
+          console.debug('No content script in tab (clearCache):', chrome.runtime.lastError.message);
+        }
+      });
+    }
     showStatus('Cache cleared successfully', 'success');
   } catch (error) {
     console.error('Error clearing cache:', error);
@@ -215,14 +233,21 @@ async function handleResetSettings() {
 async function updateCacheStats() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    chrome.tabs.sendMessage(tab.id, { action: 'getStatus' }, (response) => {
-      if (response && response.stats) {
-        document.getElementById('cacheHits').textContent = response.stats.hits || 0;
-        document.getElementById('cacheMisses').textContent = response.stats.misses || 0;
-        document.getElementById('hitRate').textContent = response.stats.hitRate || '0%';
-        document.getElementById('cacheSize').textContent = `${response.stats.cacheSize || 0} / ${response.stats.maxSize || 500}`;
-      }
-    });
+    if (tab?.id != null) {
+      chrome.tabs.sendMessage(tab.id, { action: 'getStatus' }, (response) => {
+        if (chrome.runtime.lastError) {
+          // Content script not present in this tab
+          console.debug('No content script in tab (getStatus):', chrome.runtime.lastError.message);
+          return;
+        }
+        if (response && response.stats) {
+          document.getElementById('cacheHits').textContent = response.stats.hits || 0;
+          document.getElementById('cacheMisses').textContent = response.stats.misses || 0;
+          document.getElementById('hitRate').textContent = response.stats.hitRate || '0%';
+          document.getElementById('cacheSize').textContent = `${response.stats.cacheSize || 0} / ${response.stats.maxSize || 500}`;
+        }
+      });
+    }
   } catch (error) {
     // Tab might not have content script active - this is expected
     console.debug('Could not get cache stats:', error);
@@ -248,10 +273,16 @@ function showStatus(message, type = 'info') {
 async function getTabLanguages() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const response = await chrome.tabs.sendMessage(tab.id, {
-      action: 'getLanguages'
+    if (!tab || tab.id == null) return null;
+    return await new Promise((resolve) => {
+      chrome.tabs.sendMessage(tab.id, { action: 'getLanguages' }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.debug('No content script in tab (getLanguages):', chrome.runtime.lastError.message);
+          return resolve(null);
+        }
+        resolve(response);
+      });
     });
-    return response;
   } catch (error) {
     console.error('Error getting tab languages:', error);
     return null;
