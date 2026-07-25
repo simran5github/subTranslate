@@ -172,6 +172,22 @@ async function translateText(text, targetLang, sourceLang = 'en', provider = 'my
     }
   }
 
+  if (provider === 'google') {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Google Translate API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const translated = data?.[0]?.[0]?.[0];
+    if (typeof translated === 'string' && translated.length > 0) {
+      return translated;
+    }
+
+    throw new Error('Google Translate returned no translated text');
+  }
+
   // Fallback to MyMemory
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
   const response = await fetch(url);
@@ -189,6 +205,10 @@ async function translateText(text, targetLang, sourceLang = 'en', provider = 'my
 }
 
 async function translateWithFallback(text, targetLang, sourceLang = 'en', preferredProvider = null) {
+  if (sourceLang === targetLang) {
+    return text;
+  }
+
   const providers = [...AVAILABLE_PROVIDERS];
   if (preferredProvider) {
     const idx = providers.indexOf(preferredProvider);
@@ -207,7 +227,7 @@ async function translateWithFallback(text, targetLang, sourceLang = 'en', prefer
     if (!isProviderAvailable(provider)) continue;
     try {
       const translated = await translateWithRetries(text, targetLang, sourceLang, provider);
-      if (translated) return translated;
+      if (translated && translated !== text) return translated;
     } catch (err) {
       const msg = String(err && err.message || err).toLowerCase();
       if (msg.includes('429') || msg.includes('rate limit')) {

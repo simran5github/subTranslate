@@ -323,6 +323,18 @@ async function translateTexts(texts, targetLang, sourceLang = 'en') {
           console.debug(`  ✓ Result: "${translation.substring(0, 50)}..."`);
           return translation;
         }
+
+        const currentProvider = translationService.provider;
+        const alternatives = translationService.getAvailableProviders().filter(p => p !== currentProvider && (providerCooldowns[p] || 0) <= Date.now());
+        if (alternatives.length > 0) {
+          console.info(`🔁 Switching provider from '${currentProvider}' to '${alternatives[0]}' after identical or empty translation result`);
+          try {
+            translationService.switchProvider(alternatives[0]);
+          } catch (swErr) {
+            console.error('Provider switch failed:', swErr);
+          }
+        }
+
         // Treat identical translation as failure to trigger retry
         throw new Error('Translation identical to source or empty');
       } catch (error) {

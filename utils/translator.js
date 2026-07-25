@@ -125,25 +125,20 @@ class GoogleTranslateProvider {
   async translate(text, targetLang, sourceLang = 'en') {
     try {
       const response = await fetch(
-        `https://translate.googleapis.com/translate_a/element.js?cb=googleTranslateElementInit`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
-          },
-          body: `client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`
-        }
+        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`
       );
 
       if (!response.ok) {
         throw new Error(`Google Translate API error: ${response.status}`);
       }
 
-      // Parse response - simplified approach
-      // Note: This is a basic implementation; a production version might need more robust parsing
-      const text_response = await response.text();
-      // This would need proper parsing of Google's response format
-      return text; // Fallback to original text
+      const data = await response.json();
+      const translated = data?.[0]?.[0]?.[0];
+      if (typeof translated === 'string' && translated.length > 0) {
+        return translated;
+      }
+
+      throw new Error('Google Translate returned no translated text');
     } catch (error) {
       console.error('Google Translate error:', error);
       throw error;
